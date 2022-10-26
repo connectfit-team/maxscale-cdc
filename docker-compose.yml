@@ -1,0 +1,42 @@
+version: '2.4'
+services:
+    test-runner:
+        build:
+            context: .
+            dockerfile: ./Test.Dockerfile
+        depends_on:
+            - mariadb
+            - maxscale
+        volumes:
+            - ./:/app
+        environment:
+            - MAXSCALE_HOST=${MAXSCALE_HOST:-maxscale}
+            - MAXSCALE_PORT=${MAXSCALE_PORT:-4001}
+            - MAXSCALE_USER=${MAXSCALE_USER:-maxuser}
+            - MAXSCALE_PASSWORD=${MAXSCALE_PASSWORD:-maxpwd}
+            - MAXSCALE_DATABASE=${MAXSCALE_DATABASE:-test}
+            - MAXSCALE_TABLE=${MAXSCALE_TABLE:-tests}
+
+    mariadb:
+        image: mariadb:10.3
+        environment:
+            MYSQL_ALLOW_EMPTY_PASSWORD: 'Y'
+        volumes:
+            - ./scripts/sql/init-test-database.sql:/docker-entrypoint-initdb.d/test.sql
+        command: mysqld --log-bin=mariadb-bin --binlog-format=ROW --server-id=3000 --log-slave-updates
+        ports:
+            - "3307:3306"
+        healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]
+            interval: 5s
+            timeout: 20s
+
+    maxscale:
+        image: mariadb/maxscale:latest
+        depends_on:
+            - mariadb
+        volumes:
+            - ./maxscale/example.cnf:/etc/maxscale.cnf.d/example.cnf
+        ports:
+            - "4001:4001"   # cdc
+            - "8989:8989"   # REST API port

@@ -25,7 +25,7 @@ services:
             - ./scripts/sql/init-test-database.sql:/docker-entrypoint-initdb.d/test.sql
         command: mysqld --log-bin=mariadb-bin --binlog-format=ROW --server-id=3000 --log-slave-updates
         ports:
-            - "3307:3306"
+            - "3600:3306"
         healthcheck:
             test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]
             interval: 5s

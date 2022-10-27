@@ -17,7 +17,4 @@ CREATE TABLE tests (
 );
 
 INSERT INTO tests (id)
-VALUES
-  (1),
-  (2),
-  (3);
+VALUES (1);

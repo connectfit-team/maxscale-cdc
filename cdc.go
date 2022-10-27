@@ -132,13 +132,13 @@ type RequestDataOptions struct {
 // RequestData starts fetching events from the given table in the given database.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
-func (c *CDCConnection) RequestData(ctx context.Context, database, table string, opts ...RequestDataOption) (<-chan any, error) {
+func (c *CDCConnection) RequestData(ctx context.Context, database, table string, opts ...RequestDataOption) (<-chan CDCEvent, error) {
 	var options RequestDataOptions
 	for _, opt := range opts {
 		opt(&options)
 	}
 
-	data := make(chan any, 1)
+	data := make(chan CDCEvent, 1)
 
 	var requestDataCmd bytes.Buffer
 	if _, err := requestDataCmd.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
@@ -169,12 +169,11 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 	}()
 
 	go func() {
-
 		var readSchema bool
 		dec := json.NewDecoder(c.conn)
 		for {
-			var event any
-			err := dec.Decode(&event)
+			var v map[string]interface{}
+			err := dec.Decode(&v)
 			if err != nil {
 				// The first read after requesting data from a database table should
 				// read the table schema. However if the .avro file associated to the
@@ -199,7 +198,22 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 				readSchema = true
 			}
 
-			data <- event
+			// Data has already been decoded through the JSON decoder therefore
+			// there's no way something could go wrong while marshalling :)
+			b, _ := json.Marshal(v)
+			if _, ok := v["namespace"]; ok {
+				var event DDLEvent
+				if err = json.Unmarshal(b, &event); err != nil {
+					return
+				}
+				data <- &event
+			} else {
+				var event DMLEvent
+				if err = json.Unmarshal(b, &event); err != nil {
+					return
+				}
+				data <- &event
+			}
 		}
 	}()
 

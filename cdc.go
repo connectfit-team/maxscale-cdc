@@ -201,14 +201,14 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 			// Data has already been decoded through the JSON decoder therefore
 			// there's no way something could go wrong while marshalling :)
 			b, _ := json.Marshal(v)
-			if _, ok := v["namespace"]; ok {
-				var event DDLEvent
+			if _, ok := v["domain"]; ok {
+				var event DMLEvent
 				if err = json.Unmarshal(b, &event); err != nil {
 					return
 				}
 				data <- &event
 			} else {
-				var event DMLEvent
+				var event DDLEvent
 				if err = json.Unmarshal(b, &event); err != nil {
 					return
 				}

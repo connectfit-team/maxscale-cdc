@@ -5,8 +5,10 @@ services:
             context: .
             dockerfile: ./Test.Dockerfile
         depends_on:
-            - mariadb
-            - maxscale
+            mariadb:
+                condition: service_healthy
+            maxscale:
+                condition: service_healthy
         volumes:
             - ./:/app
         environment:
@@ -38,5 +40,9 @@ services:
         volumes:
             - ./maxscale/example.cnf:/etc/maxscale.cnf.d/example.cnf
         ports:
-            - "4001:4001"   # cdc
+            - "4001:4001"   # CDC
             - "8989:8989"   # REST API port
+        healthcheck:
+          test: bash -c "[ -f /var/lib/maxscale/avro/test.tests.000001.avro ]" # Maybe there is a better way to do this
+          interval: 5s
+          timeout: 20s

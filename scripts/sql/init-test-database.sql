@@ -16,5 +16,6 @@ CREATE TABLE tests (
   id int PRIMARY KEY
 );
 
-INSERT INTO tests (id)
-VALUES (1);
+INSERT INTO tests (id) VALUES (1);
+
+INSERT INTO tests (id) VALUES (2);

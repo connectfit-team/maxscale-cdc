@@ -245,11 +245,14 @@ func TestCDCConnectionRequestData(t *testing.T) {
 		Sequence:    7,
 		EventNumber: 1,
 		EventType:   "insert",
+		TableData: map[string]interface{}{
+			"id": float64(1),
+		},
 	}
 	dmlEvent := event.(*maxscale.DMLEvent)
 	// TODO: Find a way to compare timestamp as well
 	dmlEvent.Timestamp = 0
 	if !reflect.DeepEqual(dmlEvent, expectedDMLEvent) {
-		t.Fatalf("captured DDL event differs from the expected one")
+		t.Fatalf("captured DML event differs from the expected one")
 	}
 }

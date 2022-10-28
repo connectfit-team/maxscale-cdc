@@ -36,7 +36,8 @@ services:
     maxscale:
         image: mariadb/maxscale:latest
         depends_on:
-            - mariadb
+            mariadb:
+                condition: service_healthy
         volumes:
             - ./maxscale/example.cnf:/etc/maxscale.cnf.d/example.cnf
         ports:

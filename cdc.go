@@ -138,7 +138,7 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 		opt(&options)
 	}
 
-	data := make(chan CDCEvent, 1)
+	dataStream := make(chan CDCEvent, 1)
 
 	var requestDataCmd bytes.Buffer
 	if _, err := requestDataCmd.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
@@ -169,55 +169,90 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 	}()
 
 	go func() {
-		var readSchema bool
-		dec := json.NewDecoder(c.conn)
-		for {
-			var v map[string]interface{}
-			err := dec.Decode(&v)
-			if err != nil {
-				// The first read after requesting data from a database table should
-				// read the table schema. However if the .avro file associated to the
-				// table is not present in the specified avrodir on the filesystem
-				// where MaxScale is running, an error is returned and should be read
-				// over the TCP connection.
-				if !readSchema {
-					resp, err := readResponse(dec.Buffered())
-					if err != nil {
-						close(data)
-						return
-					}
-					log.Printf("Failed to read the table schema: %s\n", resp)
-				} else {
-					log.Printf("Failed to decode the CDC event: %v\n", err)
-				}
-				close(data)
-				return
-			}
-
-			if !readSchema {
-				readSchema = true
-			}
-
-			// Data has already been decoded through the JSON decoder therefore
-			// there's no way something could go wrong while marshalling :)
-			b, _ := json.Marshal(v)
-			if _, ok := v["domain"]; ok {
-				var event DMLEvent
-				if err = json.Unmarshal(b, &event); err != nil {
-					return
-				}
-				data <- &event
-			} else {
-				var event DDLEvent
-				if err = json.Unmarshal(b, &event); err != nil {
-					return
-				}
-				data <- &event
-			}
+		if err := c.startDecodingData(dataStream); err != nil {
+			log.Printf("Failed to scan data: %v", err)
+			close(dataStream)
 		}
 	}()
 
-	return data, nil
+	return dataStream, nil
+}
+
+func (c *CDCConnection) startDecodingData(dataStream chan<- CDCEvent) error {
+	var readSchema bool
+	dec := json.NewDecoder(c.conn)
+	for {
+		var data map[string]interface{}
+		err := dec.Decode(&data)
+		if err != nil {
+			// The first read after requesting data from a database table should
+			// read the table schema. However if the .avro file associated to the
+			// table is not present in the specified avrodir on the filesystem
+			// where MaxScale is running, an error is returned and should be read
+			// over the TCP connection.
+			if !readSchema {
+				resp, err := readResponse(dec.Buffered())
+				if err != nil {
+					return fmt.Errorf("failed to read the .avro file missing error: %w", err)
+				}
+				return fmt.Errorf("failed to read the table schema: %s", resp)
+			}
+			return fmt.Errorf("failed to decode the CDC event: %w", err)
+		}
+
+		if !readSchema {
+			readSchema = true
+		}
+
+		// Data has already been decoded through the JSON decoder therefore
+		// there's no way something could go wrong while marshalling :)
+		b, _ := json.Marshal(data)
+
+		if _, ok := data["domain"]; ok {
+			dmlEvent, err := c.decodeDMLEvent(b)
+			if err != nil {
+				return err
+			}
+			dataStream <- dmlEvent
+		} else {
+			ddlEvent, err := c.decodeDDLEvent(b)
+			if err != nil {
+				return err
+			}
+			dataStream <- ddlEvent
+		}
+	}
+}
+
+func (c *CDCConnection) decodeDMLEvent(data []byte) (*DMLEvent, error) {
+	var event DMLEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the DML event data into a go value: %w", err)
+	}
+
+	// The table data are all the DML fields minus the fields that are not
+	// columms of the table.
+	if err := json.Unmarshal(data, &event.TableData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the table data into a go value: %w", err)
+	}
+	delete(event.TableData, "domain")
+	delete(event.TableData, "server_id")
+	delete(event.TableData, "sequence")
+	delete(event.TableData, "event_number")
+	delete(event.TableData, "timestamp")
+	delete(event.TableData, "event_type")
+	delete(event.TableData, "table_name")
+	delete(event.TableData, "table_schema")
+
+	return &event, nil
+}
+
+func (c *CDCConnection) decodeDDLEvent(data []byte) (*DDLEvent, error) {
+	var event DDLEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal the DDL event data into a go value: %w", err)
+	}
+	return &event, nil
 }
 
 func (c *CDCConnection) Close() error {

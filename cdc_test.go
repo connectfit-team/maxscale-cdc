@@ -59,7 +59,7 @@ func TestCDCClient_Authenticate(t *testing.T) {
 	}
 }
 
-func TestCDCConnectionAuthenticate_FailsWithWrongCredentials(t *testing.T) {
+func TestCDCClient_Authenticate_FailsWithWrongCredentials(t *testing.T) {
 	ctx := context.Background()
 
 	client := maxscale.NewCDCClient()
@@ -78,7 +78,7 @@ func TestCDCConnectionAuthenticate_FailsWithWrongCredentials(t *testing.T) {
 	}
 }
 
-func TestCDCConnectionRegister(t *testing.T) {
+func TestCDCClient_Register(t *testing.T) {
 	ctx := context.Background()
 
 	client := maxscale.NewCDCClient()
@@ -104,7 +104,7 @@ func TestCDCConnectionRegister(t *testing.T) {
 	}
 }
 
-func TestCDCConnectionRegister_FailsIfEmptyIdentifier(t *testing.T) {
+func TestCDCClient_Register_FailsIfEmptyIdentifier(t *testing.T) {
 	ctx := context.Background()
 
 	client := maxscale.NewCDCClient()
@@ -129,7 +129,7 @@ func TestCDCConnectionRegister_FailsIfEmptyIdentifier(t *testing.T) {
 	}
 }
 
-func TestCDCConnectionRequestData_ReturnsNoEventIfNonExistingTable(t *testing.T) {
+func TestCDCClient_RequestData_ReturnsNoEventIfNonExistingTable(t *testing.T) {
 	ctx := context.Background()
 
 	client := maxscale.NewCDCClient()
@@ -164,7 +164,7 @@ func TestCDCConnectionRequestData_ReturnsNoEventIfNonExistingTable(t *testing.T)
 	}
 }
 
-func TestCDCConnectionRequestData(t *testing.T) {
+func TestCDCClient_RequestData(t *testing.T) {
 	ctx := context.Background()
 
 	client := maxscale.NewCDCClient()
@@ -274,7 +274,7 @@ func TestCDCConnectionRequestData(t *testing.T) {
 	}
 }
 
-func TestCDCConnectionRequestData_WithGTID(t *testing.T) {
+func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	ctx := context.Background()
 
 	client := maxscale.NewCDCClient()

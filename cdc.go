@@ -29,26 +29,33 @@ type cdcClientOptions struct {
 	dialTimeout  time.Duration
 }
 
+// CDCClients represents a client communication with a MaxScale CDC protocol listener.
 type CDCClient struct {
-	conn net.Conn
-
+	conn    net.Conn
 	options cdcClientOptions
 }
 
+// CDCClientOption is a function option used to parameterize a CDC client.
 type CDCClientOption func(*cdcClientOptions)
 
+// WithDialTimeout sets the timeout of the dial call when creating the
+// connection with the MaxScale protocol listener.
 func WithDialTimeout(timeout time.Duration) CDCClientOption {
 	return func(co *cdcClientOptions) {
 		co.readTimeout = timeout
 	}
 }
 
+// WithReadTimeout sets the timeout for all read calls over the connection
+// with the MaxScale protocol listener.
 func WithReadTimeout(timeout time.Duration) CDCClientOption {
 	return func(co *cdcClientOptions) {
 		co.readTimeout = timeout
 	}
 }
 
+// WithReadTimeout sets the timeout for all write calls over the connection
+// with the MaxScale protocol listener.
 func WithWriteTimeout(timeout time.Duration) CDCClientOption {
 	return func(co *cdcClientOptions) {
 		co.readTimeout = timeout

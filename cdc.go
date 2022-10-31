@@ -18,62 +18,98 @@ import (
 const (
 	defaultReadSize = 4096
 
-	// TODO: Find a clean way to inject timeouts in the connection.
-	defaultDialTimeout   = time.Second * 5
-	defaultReadTimeout   = time.Second * 5
-	defaultWriteDeadline = time.Second * 5
+	defaultDialTimeout  = time.Second * 5
+	defaultReadTimeout  = time.Second * 5
+	defaultWriteTimeout = time.Second * 5
 )
 
-// CDCConnection represents a connection with a MaxScale CDC protocol listener.
-type CDCConnection struct {
+type cdcClientOptions struct {
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	dialTimeout  time.Duration
+}
+
+type CDCClient struct {
 	conn net.Conn
+
+	options cdcClientOptions
+}
+
+type CDCClientOption func(*cdcClientOptions)
+
+func WithDialTimeout(timeout time.Duration) CDCClientOption {
+	return func(co *cdcClientOptions) {
+		co.readTimeout = timeout
+	}
+}
+
+func WithReadTimeout(timeout time.Duration) CDCClientOption {
+	return func(co *cdcClientOptions) {
+		co.readTimeout = timeout
+	}
+}
+
+func WithWriteTimeout(timeout time.Duration) CDCClientOption {
+	return func(co *cdcClientOptions) {
+		co.readTimeout = timeout
+	}
+}
+
+func NewCDCClient(opts ...CDCClientOption) *CDCClient {
+	c := &CDCClient{
+		options: cdcClientOptions{
+			dialTimeout:  defaultDialTimeout,
+			readTimeout:  defaultReadTimeout,
+			writeTimeout: defaultWriteTimeout,
+		},
+	}
+
+	for _, opt := range opts {
+		opt(&c.options)
+	}
+
+	return c
 }
 
 // Connect creates a new connection with the MaxScale CDC protocol listener
 // listening at the given address.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
-func ConnectCDC(ctx context.Context, address string) (*CDCConnection, error) {
+func (c *CDCClient) Connect(ctx context.Context, address string) error {
 	dialer := net.Dialer{
-		Timeout: defaultDialTimeout,
+		Timeout: c.options.dialTimeout,
 	}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
-		return nil, fmt.Errorf("could not connect to %s over TCP: %w", address, err)
+		return fmt.Errorf("could not connect to %s over TCP: %w", address, err)
 	}
-	return &CDCConnection{
-		conn: conn,
-	}, nil
+	c.conn = conn
+
+	return nil
 }
 
 // Authenticate sends an authentication message containing the given credentials
 // to the MaxScale CDC protocol listener.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
-func (c *CDCConnection) Authenticate(user, password string) error {
+func (c *CDCClient) Authenticate(user, password string) error {
 	authMsg, err := c.formatAuthenticationMessage(user, password)
 	if err != nil {
 		return err
 	}
 
-	if err = c.conn.SetWriteDeadline(time.Now().Add(defaultWriteDeadline)); err != nil {
+	if err = c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
-
 	if _, err = c.conn.Write(authMsg); err != nil {
 		return fmt.Errorf("could not write the authentication message to the connection: %w", err)
 	}
 
-	if err = c.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout)); err != nil {
+	if err = c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
 		return fmt.Errorf("could not set read deadline to the future read call on the connection: %w", err)
 	}
-
 	if err := c.checkResponse(); err != nil {
 		return fmt.Errorf("failed to authenticate the user: %w", err)
-	}
-
-	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("could not reset read deadline on the connection: %w", err)
 	}
 
 	return nil
@@ -82,25 +118,19 @@ func (c *CDCConnection) Authenticate(user, password string) error {
 // Register registers the client using the connection with the given UUID.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#registration_1
-func (c *CDCConnection) Register(uuid string) error {
-	if err := c.conn.SetWriteDeadline(time.Now().Add(defaultWriteDeadline)); err != nil {
+func (c *CDCClient) Register(uuid string) error {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
-
 	if _, err := c.conn.Write([]byte("REGISTER UUID=" + uuid + ", TYPE=JSON")); err != nil {
 		return fmt.Errorf("could not write UUID %s to the connection: %w", uuid, err)
 	}
 
-	if err := c.conn.SetReadDeadline(time.Now().Add(defaultReadTimeout)); err != nil {
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
 		return fmt.Errorf("could not set read deadline to the future write call on the connection: %w", err)
 	}
-
 	if err := c.checkResponse(); err != nil {
 		return fmt.Errorf("failed to register the client: %w", err)
-	}
-
-	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("could not reset read deadline on the connection: %w", err)
 	}
 
 	return nil
@@ -132,7 +162,7 @@ type RequestDataOptions struct {
 // RequestData starts fetching events from the given table in the given database.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
-func (c *CDCConnection) RequestData(ctx context.Context, database, table string, opts ...RequestDataOption) (<-chan CDCEvent, error) {
+func (c *CDCClient) RequestData(ctx context.Context, database, table string, opts ...RequestDataOption) (<-chan CDCEvent, error) {
 	var options RequestDataOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -155,10 +185,9 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 		}
 	}
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(defaultWriteDeadline)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
 		return nil, fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
-
 	if _, err := c.conn.Write(requestDataCmd.Bytes()); err != nil {
 		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the connection: %w", err)
 	}
@@ -178,7 +207,11 @@ func (c *CDCConnection) RequestData(ctx context.Context, database, table string,
 	return dataStream, nil
 }
 
-func (c *CDCConnection) startDecodingData(dataStream chan<- CDCEvent) error {
+func (c *CDCClient) startDecodingData(dataStream chan<- CDCEvent) error {
+	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
+		return fmt.Errorf("could not reset the read deadline on the connection: %w", err)
+	}
+
 	var readSchema bool
 	dec := json.NewDecoder(c.conn)
 	for {
@@ -224,7 +257,7 @@ func (c *CDCConnection) startDecodingData(dataStream chan<- CDCEvent) error {
 	}
 }
 
-func (c *CDCConnection) decodeDMLEvent(data []byte) (*DMLEvent, error) {
+func (c *CDCClient) decodeDMLEvent(data []byte) (*DMLEvent, error) {
 	var event DMLEvent
 	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the DML event data into a go value: %w", err)
@@ -247,19 +280,23 @@ func (c *CDCConnection) decodeDMLEvent(data []byte) (*DMLEvent, error) {
 	return &event, nil
 }
 
-func (c *CDCConnection) decodeDDLEvent(data []byte) (*DDLEvent, error) {
+func (c *CDCClient) decodeDDLEvent(data []byte) (*DDLEvent, error) {
 	var event DDLEvent
 	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the DDL event data into a go value: %w", err)
 	}
+
 	return &event, nil
 }
 
-func (c *CDCConnection) Close() error {
-	return c.conn.Close()
+func (c *CDCClient) Close() error {
+	if c.conn != nil {
+		c.conn.Close()
+	}
+	return nil
 }
 
-func (c *CDCConnection) formatAuthenticationMessage(user, password string) ([]byte, error) {
+func (c *CDCClient) formatAuthenticationMessage(user, password string) ([]byte, error) {
 	var buf bytes.Buffer
 
 	_, err := buf.WriteString(user + ":")
@@ -284,7 +321,7 @@ func (c *CDCConnection) formatAuthenticationMessage(user, password string) ([]by
 	return authMsg, nil
 }
 
-func (c *CDCConnection) checkResponse() error {
+func (c *CDCClient) checkResponse() error {
 	resp, err := readResponse(c.conn)
 	if err != nil {
 		return err

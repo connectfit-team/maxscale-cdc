@@ -16,24 +16,19 @@ import (
 func TestCDCClient_Connect(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 }
 
 func TestCDCClient_Connect_FailsIfWrongAddress(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
-	err := client.Connect(ctx, "wrong address (:")
+	_, err := maxscale.Connect(ctx, "wrong address (:")
 	if err == nil {
 		t.Fatalf("Should return an error when given a wrong address")
 	}
@@ -42,18 +37,16 @@ func TestCDCClient_Connect_FailsIfWrongAddress(t *testing.T) {
 func TestCDCClient_Authenticate(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
 	user, pwd := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	err = client.Authenticate(user, pwd)
+	err = conn.Authenticate(user, pwd)
 	if err != nil {
 		t.Fatalf("Could not authenticate to the MaxScale CDC listener with credentials: %s:%s: %v", user, pwd, err)
 	}
@@ -62,17 +55,15 @@ func TestCDCClient_Authenticate(t *testing.T) {
 func TestCDCClient_Authenticate_FailsWithWrongCredentials(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
-	err = client.Authenticate("wrong", "credentials")
+	err = conn.Authenticate("wrong", "credentials")
 	if err == nil {
 		t.Fatalf("Should return an error when given wrong credentials")
 	}
@@ -81,24 +72,22 @@ func TestCDCClient_Authenticate_FailsWithWrongCredentials(t *testing.T) {
 func TestCDCClient_Register(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
 	user, pwd := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	err = client.Authenticate(user, pwd)
+	err = conn.Authenticate(user, pwd)
 	if err != nil {
 		t.Fatalf("Could not authenticate to the MaxScale CDC listener with credentials: %s:%s: %v", user, pwd, err)
 	}
 
 	uuid := uuid.NewString()
-	err = client.Register(uuid)
+	err = conn.Register(uuid)
 	if err != nil {
 		t.Fatalf("Failed to register to the MaxScale CDC listener: %v", err)
 	}
@@ -107,23 +96,21 @@ func TestCDCClient_Register(t *testing.T) {
 func TestCDCClient_Register_FailsIfEmptyIdentifier(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
 	user, pwd := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	err = client.Authenticate(user, pwd)
+	err = conn.Authenticate(user, pwd)
 	if err != nil {
 		t.Fatalf("Could not authenticate to the MaxScale CDC listener with credentials: %s:%s: %v", user, pwd, err)
 	}
 
-	err = client.Register("")
+	err = conn.Register("")
 	if err == nil {
 		t.Fatalf("Should return an error when trying to register with an empty identifier")
 	}
@@ -132,29 +119,27 @@ func TestCDCClient_Register_FailsIfEmptyIdentifier(t *testing.T) {
 func TestCDCClient_RequestData_ReturnsNoEventIfNonExistingTable(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
 	user, pwd := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	err = client.Authenticate(user, pwd)
+	err = conn.Authenticate(user, pwd)
 	if err != nil {
 		t.Fatalf("Could not authenticate to the MaxScale CDC listener with credentials: %s:%s: %v", user, pwd, err)
 	}
 
 	uuid := uuid.NewString()
-	err = client.Register(uuid)
+	err = conn.Register(uuid)
 	if err != nil {
 		t.Fatalf("Failed to register to the MaxScale CDC listener: %v", err)
 	}
 
-	data, err := client.RequestData(ctx, "String", "bar")
+	data, err := conn.RequestData(ctx, "String", "bar")
 	if err != nil {
 		t.Fatalf("Could not request data to from table String.bar: %v\n", err)
 	}
@@ -167,24 +152,22 @@ func TestCDCClient_RequestData_ReturnsNoEventIfNonExistingTable(t *testing.T) {
 func TestCDCClient_RequestData(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
 	user, pwd := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	err = client.Authenticate(user, pwd)
+	err = conn.Authenticate(user, pwd)
 	if err != nil {
 		t.Fatalf("Could not authenticate to the MaxScale CDC listener with credentials: %s:%s: %v", user, pwd, err)
 	}
 
 	uuid := uuid.NewString()
-	err = client.Register(uuid)
+	err = conn.Register(uuid)
 	if err != nil {
 		t.Fatalf("Failed to register to the MaxScale CDC listener: %v", err)
 	}
@@ -192,7 +175,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	db, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
-	data, err := client.RequestData(ctx, db, table)
+	data, err := conn.RequestData(ctx, db, table)
 	if err != nil {
 		t.Fatalf("Could not request data to from table %s.%s: %v\n", db, table, err)
 	}
@@ -277,24 +260,22 @@ func TestCDCClient_RequestData(t *testing.T) {
 func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	ctx := context.Background()
 
-	client := maxscale.NewCDCClient()
-	defer client.Close()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	err := client.Connect(ctx, addr)
+	conn, err := maxscale.Connect(ctx, addr)
 	if err != nil {
 		t.Fatalf("Failed to connect to the MaxScale CDC listener at %s: %v", addr, err)
 	}
+	defer conn.Close()
 
 	user, pwd := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	err = client.Authenticate(user, pwd)
+	err = conn.Authenticate(user, pwd)
 	if err != nil {
 		t.Fatalf("Could not authenticate to the MaxScale CDC listener with credentials: %s:%s: %v", user, pwd, err)
 	}
 
 	uuid := uuid.NewString()
-	err = client.Register(uuid)
+	err = conn.Register(uuid)
 	if err != nil {
 		t.Fatalf("Failed to register to the MaxScale CDC listener: %v", err)
 	}
@@ -302,7 +283,7 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	db, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
-	data, err := client.RequestData(ctx, db, table, maxscale.WithGTID("0-3000-8"))
+	data, err := conn.RequestData(ctx, db, table, maxscale.WithGTID("0-3000-8"))
 	if err != nil {
 		t.Fatalf("Could not request data to from table %s.%s: %v\n", db, table, err)
 	}

@@ -12,12 +12,12 @@ services:
         volumes:
             - ./:/app
         environment:
-            - MAXSCALE_HOST=${MAXSCALE_HOST:-maxscale}
-            - MAXSCALE_PORT=${MAXSCALE_PORT:-4001}
-            - MAXSCALE_USER=${MAXSCALE_USER:-maxuser}
-            - MAXSCALE_PASSWORD=${MAXSCALE_PASSWORD:-maxpwd}
-            - MAXSCALE_DATABASE=${MAXSCALE_DATABASE:-test}
-            - MAXSCALE_TABLE=${MAXSCALE_TABLE:-tests}
+            - MAXSCALE_HOST=maxscale
+            - MAXSCALE_PORT=4001
+            - MAXSCALE_USER=maxuser
+            - MAXSCALE_PASSWORD=maxpwd
+            - MAXSCALE_DATABASE=test
+            - MAXSCALE_TABLE=tests
 
     mariadb:
         image: mariadb:10.3

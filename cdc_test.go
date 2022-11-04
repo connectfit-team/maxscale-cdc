@@ -6,10 +6,10 @@ import (
 	"context"
 	"net"
 	"os"
-	"reflect"
 	"testing"
 
 	"github.com/connectfit-team/maxscale-cdc-client"
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
 )
 
@@ -234,8 +234,9 @@ func TestCDCClient_RequestData(t *testing.T) {
 			},
 		},
 	}
-	if !reflect.DeepEqual(event.(*maxscale.DDLEvent), expectedDDLEvent) {
-		t.Fatalf("captured DDL event differs from the expected one")
+	ddlEvent := event.(*maxscale.DDLEvent)
+	if !cmp.Equal(expectedDDLEvent, ddlEvent) {
+		t.Fatalf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
 	}
 
 	event = <-data
@@ -252,8 +253,8 @@ func TestCDCClient_RequestData(t *testing.T) {
 	dmlEvent := event.(*maxscale.DMLEvent)
 	// TODO: Find a way to compare timestamp as well
 	dmlEvent.Timestamp = 0
-	if !reflect.DeepEqual(dmlEvent, expectedDMLEvent) {
-		t.Fatalf("captured DML event differs from the expected one")
+	if !cmp.Equal(expectedDMLEvent, dmlEvent) {
+		t.Fatalf("Captured DML event differs from the expected one:\n%s", cmp.Diff(expectedDMLEvent, dmlEvent))
 	}
 }
 
@@ -342,8 +343,9 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 			},
 		},
 	}
-	if !reflect.DeepEqual(event.(*maxscale.DDLEvent), expectedDDLEvent) {
-		t.Fatalf("captured DDL event differs from the expected one")
+	ddlEvent := event.(*maxscale.DDLEvent)
+	if !cmp.Equal(expectedDDLEvent, ddlEvent) {
+		t.Fatalf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
 	}
 
 	event = <-data
@@ -360,7 +362,7 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	dmlEvent := event.(*maxscale.DMLEvent)
 	// TODO: Find a way to compare timestamp as well
 	dmlEvent.Timestamp = 0
-	if !reflect.DeepEqual(dmlEvent, expectedDMLEvent) {
-		t.Fatalf("captured DML event differs from the expected one")
+	if !cmp.Equal(expectedDMLEvent, dmlEvent) {
+		t.Fatalf("Captured DML event differs from the expected one:\n%s", cmp.Diff(expectedDMLEvent, dmlEvent))
 	}
 }

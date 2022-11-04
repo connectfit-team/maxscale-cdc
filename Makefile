@@ -1,6 +1,6 @@
 COVERAGE_OUTPUT	=	coverage.out
 
-DOCKER_FILE_TEST = Dockerfile.test
+DOCKER_FILE_TEST = Test.Dockerfile
 
 DOCKER_COMPOSE_FILE_TEST = docker-compose.yml
 

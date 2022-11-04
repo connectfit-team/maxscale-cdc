@@ -39,6 +39,9 @@ type CDCClient struct {
 	options  cdcClientOptions
 }
 
+// NewCDCClient returns a newly created CDCClient which will connect to the
+// MaxScale CDC protocol listener at the given address, authenticate to it with
+// the given credentials and register with uuid.
 func NewCDCClient(address, user, password, uuid string, opts ...CDCClientOption) *CDCClient {
 	c := &CDCClient{
 		address:  address,
@@ -93,6 +96,11 @@ func (c *CDCClient) RequestData(ctx context.Context, database, table string, opt
 	if err := c.connect(ctx); err != nil {
 		return nil, fmt.Errorf("failed to establish connection: %w", err)
 	}
+
+	go func() {
+		<-ctx.Done()
+		c.Close()
+	}()
 
 	if err := c.authenticate(); err != nil {
 		return nil, fmt.Errorf("failed to authenticate: %w", err)
@@ -214,68 +222,69 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the connection: %w", err)
 	}
 
-	go func() {
-		<-ctx.Done()
-		c.Close()
-	}()
+	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
+		return nil, fmt.Errorf("could not reset the read deadline on the connection: %w", err)
+	}
+
+	// The first read after requesting data from a database table should
+	// read the table schema. However if the .avro file associated to the
+	// table is not present in the specified avrodir on the filesystem
+	// where MaxScale is running, an error is returned and should be read
+	// over the TCP connection.
+	//
+	// In this case it is better to directly return an error rather than
+	// just logging it. Because the user have to open a new connection once
+	// the .avro file have been created and should not expect any data coming
+	// out of the dataStream.
+	dec := json.NewDecoder(c.conn)
+	event, err := c.decodeData(dec)
+	if err != nil {
+		resp, err := readResponse(dec.Buffered())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read the .avro file missing error: %w", err)
+		}
+		return nil, fmt.Errorf("failed to read the table schema: %s", resp)
+	}
+	dataStream <- event
 
 	go func() {
-		if err := c.startDecodingData(dataStream); err != nil {
-			log.Printf("Failed to scan data: %v", err)
-			close(dataStream)
+		for {
+			event, err = c.decodeData(dec)
+			if err != nil {
+				log.Printf("Failed to scan data: %v", err)
+				close(dataStream)
+				return
+			}
+			dataStream <- event
 		}
 	}()
 
 	return dataStream, nil
 }
 
-func (c *CDCClient) startDecodingData(dataStream chan<- CDCEvent) error {
-	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
-		return fmt.Errorf("could not reset the read deadline on the connection: %w", err)
+func (c *CDCClient) decodeData(dec *json.Decoder) (CDCEvent, error) {
+	var data map[string]interface{}
+	err := dec.Decode(&data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode the CDC event: %w", err)
 	}
 
-	var readSchema bool
-	dec := json.NewDecoder(c.conn)
-	for {
-		var data map[string]interface{}
-		err := dec.Decode(&data)
+	// Data has already been decoded through the JSON decoder therefore
+	// there's no way something could go wrong while marshalling :)
+	b, _ := json.Marshal(data)
+
+	if _, ok := data["domain"]; ok {
+		dmlEvent, err := c.decodeDMLEvent(b)
 		if err != nil {
-			// The first read after requesting data from a database table should
-			// read the table schema. However if the .avro file associated to the
-			// table is not present in the specified avrodir on the filesystem
-			// where MaxScale is running, an error is returned and should be read
-			// over the TCP connection.
-			if !readSchema {
-				resp, err := readResponse(dec.Buffered())
-				if err != nil {
-					return fmt.Errorf("failed to read the .avro file missing error: %w", err)
-				}
-				return fmt.Errorf("failed to read the table schema: %s", resp)
-			}
-			return fmt.Errorf("failed to decode the CDC event: %w", err)
+			return nil, err
 		}
-
-		if !readSchema {
-			readSchema = true
+		return dmlEvent, nil
+	} else {
+		ddlEvent, err := c.decodeDDLEvent(b)
+		if err != nil {
+			return nil, err
 		}
-
-		// Data has already been decoded through the JSON decoder therefore
-		// there's no way something could go wrong while marshalling :)
-		b, _ := json.Marshal(data)
-
-		if _, ok := data["domain"]; ok {
-			dmlEvent, err := c.decodeDMLEvent(b)
-			if err != nil {
-				return err
-			}
-			dataStream <- dmlEvent
-		} else {
-			ddlEvent, err := c.decodeDDLEvent(b)
-			if err != nil {
-				return err
-			}
-			dataStream <- ddlEvent
-		}
+		return ddlEvent, nil
 	}
 }
 

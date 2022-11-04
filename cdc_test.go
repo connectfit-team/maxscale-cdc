@@ -57,15 +57,11 @@ func TestCDCClient_RequestData_ReturnsNoEventIfNonExistingTable(t *testing.T) {
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
 	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
 
-	data, err := client.RequestData(context.Background(), "foo", "bar")
-	if err != nil {
-		t.Fatalf("Should return an error when given wrong wrong database and table: %v", err)
+	_, err := client.RequestData(context.Background(), "foo", "bar")
+	if err == nil {
+		t.Fatalf("Should return an error when given wrong database and table: %v", err)
 	}
 	defer client.Close()
-
-	for range data {
-		t.Fatalf("Should not receive event if table does not exist\n")
-	}
 }
 
 func TestCDCClient_RequestData(t *testing.T) {

@@ -80,12 +80,12 @@ func TestCDCClient_RequestData(t *testing.T) {
 	event := <-data
 	expectedDDLEvent := &maxscale.DDLEvent{
 		Namespace: "MaxScaleChangeDataSchema.avro",
-		Type:      "record",
+		EventType: "record",
 		Name:      "ChangeRecord",
 		Table:     "tests",
 		Database:  "test",
 		Version:   1,
-		GTID:      "0-3000-6",
+		EventGTID: "0-3000-6",
 		Fields: []maxscale.DDLEventField{
 			{
 				Name: "domain",
@@ -110,8 +110,8 @@ func TestCDCClient_RequestData(t *testing.T) {
 			{
 				Name: "event_type",
 				Type: maxscale.DDLEventFieldTypeEnum{
-					Type: "enum",
-					Name: "EVENT_TYPES",
+					FieldType: "enum",
+					Name:      "EVENT_TYPES",
 					Symbols: []string{
 						"insert",
 						"update_before",
@@ -171,12 +171,12 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	event := <-data
 	expectedDDLEvent := &maxscale.DDLEvent{
 		Namespace: "MaxScaleChangeDataSchema.avro",
-		Type:      "record",
+		EventType: "record",
 		Name:      "ChangeRecord",
 		Table:     "tests",
 		Database:  "test",
 		Version:   1,
-		GTID:      "0-3000-6",
+		EventGTID: "0-3000-6",
 		Fields: []maxscale.DDLEventField{
 			{
 				Name: "domain",
@@ -201,8 +201,8 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 			{
 				Name: "event_type",
 				Type: maxscale.DDLEventFieldTypeEnum{
-					Type: "enum",
-					Name: "EVENT_TYPES",
+					FieldType: "enum",
+					Name:      "EVENT_TYPES",
 					Symbols: []string{
 						"insert",
 						"update_before",

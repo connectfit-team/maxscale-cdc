@@ -13,7 +13,9 @@ const (
 // CDCEvent represents data changes within MariaDB(DDL or DML).
 type CDCEvent interface {
 	// Type returns the type of data change captured.
-	GetType() int
+	Type() int
+	// GTID returns the GTID associated to the event.
+	GTID() string
 }
 
 // DDL event represents data definition events(CREATE TABLE, ALTER TABLE).
@@ -21,16 +23,18 @@ type CDCEvent interface {
 // See: https://github.com/mariadb-corporation/MaxScale/blob/6.4/Documentation/Routers/KafkaCDC.md
 type DDLEvent struct {
 	Namespace string          `json:"namespace"`
-	Type      string          `json:"type"`
+	EventType string          `json:"type"`
 	Name      string          `json:"name"`
 	Table     string          `json:"table"`
 	Database  string          `json:"database"`
 	Version   int             `json:"version"`
-	GTID      string          `json:"gtid"`
+	EventGTID string          `json:"gtid"`
 	Fields    []DDLEventField `json:"fields"`
 }
 
-func (*DDLEvent) GetType() int { return TypeDDLEvent }
+func (*DDLEvent) Type() int { return TypeDDLEvent }
+
+func (e *DDLEvent) GTID() string { return e.EventGTID }
 
 type DDLEventField struct {
 	Name     string            `json:"name"`
@@ -127,24 +131,24 @@ const (
 )
 
 type DDLEventFieldType interface {
-	GetType() int
+	Type() int
 }
 
 type DDLEventFieldTypeTableData []string
 
-func (DDLEventFieldTypeTableData) GetType() int { return TypeDDLEventFieldTypeTableData }
+func (DDLEventFieldTypeTableData) Type() int { return TypeDDLEventFieldTypeTableData }
 
 type DDLEventFieldTypeEnum struct {
-	Type    string   `json:"type"`
-	Name    string   `json:"name"`
-	Symbols []string `json:"symbols"`
+	FieldType string   `json:"type"`
+	Name      string   `json:"name"`
+	Symbols   []string `json:"symbols"`
 }
 
-func (DDLEventFieldTypeEnum) GetType() int { return TypeDDLEventFieldTypeEvent }
+func (DDLEventFieldTypeEnum) Type() int { return TypeDDLEventFieldTypeEvent }
 
 type DDLEventFieldTypeString string
 
-func (DDLEventFieldTypeString) GetType() int { return TypeDDLEventFieldFieldString }
+func (DDLEventFieldTypeString) Type() int { return TypeDDLEventFieldFieldString }
 
 // DMLEvent represents data manipulation events(INSERT, UPDATE, DELETE).
 //
@@ -161,4 +165,8 @@ type DMLEvent struct {
 	TableData   map[string]interface{} `json:"-"`
 }
 
-func (*DMLEvent) GetType() int { return TypeDMLEvent }
+func (*DMLEvent) Type() int { return TypeDMLEvent }
+
+func (e *DMLEvent) GTID() string {
+	return fmt.Sprintf("%d-%d-%d", e.Domain, e.ServerID, e.Sequence)
+}

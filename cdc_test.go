@@ -57,7 +57,7 @@ func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) 
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
 	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
 
-	_, err := client.RequestData(context.Background(), "foo", "bar")
+	_, err := client.RequestData(context.Background(), "test", "bar")
 	if err != nil {
 		t.Fatalf("Should not return an error when given wrong database and table: %v", err)
 	}

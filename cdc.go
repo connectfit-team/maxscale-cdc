@@ -223,13 +223,13 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		return nil, fmt.Errorf("could not reset the read deadline on the connection: %w", err)
 	}
 
-	decodedEvents := make(chan CDCEvent)
+	decodedEvents := make(chan CDCEvent, 1)
 
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 
-		if err := c.decodeEvents(ctx, decodedEvents); err != nil {
+		if err := c.decodeEvents(decodedEvents); err != nil {
 			log.Printf("An error happened while decoding CDC events: %v\n", err)
 			close(decodedEvents)
 			return
@@ -259,32 +259,28 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 	return dataStream, nil
 }
 
-func (c *CDCClient) decodeEvents(ctx context.Context, dataStream chan<- CDCEvent) error {
-	var readSchema bool
+func (c *CDCClient) decodeEvents(dataStream chan<- CDCEvent) error {
 	dec := json.NewDecoder(c.conn)
 	for {
 		var data map[string]interface{}
 		err := dec.Decode(&data)
 		if err != nil {
-			// The first read after requesting data from a database table should
-			// read the table schema. However if the .avro file associated to the
-			// table is not present in the specified avrodir on the filesystem
-			// where MaxScale is running, an error is returned and should be read
-			// over the TCP connection.
-			if !readSchema {
+			// If the AVRO file associated to the table does not not exists an error
+			// is raised by MaxScale. Since it is not a JSON error we have to read it
+			// manually and then advance the offset to the next JSON object.
+			var serr *json.SyntaxError
+			if errors.As(err, &serr) {
 				resp, err := readResponse(dec.Buffered())
 				if err != nil {
 					return fmt.Errorf("failed to read the .avro file missing error: %w", err)
 				}
-				log.Printf("Failed to read the table schema: %s\n", resp)
+				log.Printf("Failed to read the table schema: %s", resp)
+
+				// Create a new JSON decoder which starts reading after the error offset.
+				dec = json.NewDecoder(c.conn)
 				continue
 			}
-
 			return fmt.Errorf("failed to decode the CDC event: %w", err)
-		}
-
-		if !readSchema {
-			readSchema = true
 		}
 
 		// Data has already been decoded through the JSON decoder therefore

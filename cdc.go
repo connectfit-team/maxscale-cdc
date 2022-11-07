@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,39 +28,6 @@ type cdcClientOptions struct {
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	dialTimeout  time.Duration
-}
-
-// CDCClient represents a connection with a MaxScale CDC protocol listener.
-type CDCClient struct {
-	address  string
-	user     string
-	password string
-	uuid     string
-	conn     net.Conn
-	options  cdcClientOptions
-}
-
-// NewCDCClient returns a newly created CDCClient which will connect to the
-// MaxScale CDC protocol listener at the given address, authenticate to it with
-// the given credentials and register with uuid.
-func NewCDCClient(address, user, password, uuid string, opts ...CDCClientOption) *CDCClient {
-	c := &CDCClient{
-		address:  address,
-		user:     user,
-		password: password,
-		uuid:     uuid,
-		options: cdcClientOptions{
-			dialTimeout:  defaultDialTimeout,
-			readTimeout:  defaultReadTimeout,
-			writeTimeout: defaultWriteTimeout,
-		},
-	}
-
-	for _, opt := range opts {
-		opt(&c.options)
-	}
-
-	return c
 }
 
 // CDCClientOption is a function option used to parameterize a CDC client.
@@ -89,18 +57,47 @@ func WithWriteTimeout(timeout time.Duration) CDCClientOption {
 	}
 }
 
+// CDCClient represents a connection with a MaxScale CDC protocol listener.
+type CDCClient struct {
+	address  string
+	user     string
+	password string
+	uuid     string
+	conn     net.Conn
+	options  cdcClientOptions
+	wg       sync.WaitGroup
+}
+
+// NewCDCClient returns a newly created CDCClient which will connect to the
+// MaxScale CDC protocol listener at the given address, authenticate to it with
+// the given credentials and register with uuid.
+func NewCDCClient(address, user, password, uuid string, opts ...CDCClientOption) *CDCClient {
+	c := &CDCClient{
+		address:  address,
+		user:     user,
+		password: password,
+		uuid:     uuid,
+		options: cdcClientOptions{
+			dialTimeout:  defaultDialTimeout,
+			readTimeout:  defaultReadTimeout,
+			writeTimeout: defaultWriteTimeout,
+		},
+	}
+
+	for _, opt := range opts {
+		opt(&c.options)
+	}
+
+	return c
+}
+
 // RequestData starts fetching events from the given table in the given database.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
 func (c *CDCClient) RequestData(ctx context.Context, database, table string, opts ...RequestDataOption) (<-chan CDCEvent, error) {
-	if err := c.connect(ctx); err != nil {
+	if err := c.connect(); err != nil {
 		return nil, fmt.Errorf("failed to establish connection: %w", err)
 	}
-
-	go func() {
-		<-ctx.Done()
-		c.Close()
-	}()
 
 	if err := c.authenticate(); err != nil {
 		return nil, fmt.Errorf("failed to authenticate: %w", err)
@@ -121,11 +118,11 @@ func (c *CDCClient) RequestData(ctx context.Context, database, table string, opt
 // listening at the given address.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
-func (c *CDCClient) connect(ctx context.Context) error {
+func (c *CDCClient) connect() error {
 	dialer := &net.Dialer{
 		Timeout: c.options.dialTimeout,
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", c.address)
+	conn, err := dialer.Dial("tcp", c.address)
 	if err != nil {
 		return fmt.Errorf("could not connect to %s over TCP: %w", c.address, err)
 	}
@@ -226,65 +223,85 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		return nil, fmt.Errorf("could not reset the read deadline on the connection: %w", err)
 	}
 
-	// The first read after requesting data from a database table should
-	// read the table schema. However if the .avro file associated to the
-	// table is not present in the specified avrodir on the filesystem
-	// where MaxScale is running, an error is returned and should be read
-	// over the TCP connection.
-	//
-	// In this case it is better to directly return an error rather than
-	// just logging it. Because the user have to open a new connection once
-	// the .avro file have been created and should not expect any data coming
-	// out of the dataStream.
-	dec := json.NewDecoder(c.conn)
-	event, err := c.decodeData(dec)
-	if err != nil {
-		resp, err := readResponse(dec.Buffered())
-		if err != nil {
-			return nil, fmt.Errorf("failed to read the .avro file missing error: %w", err)
-		}
-		return nil, fmt.Errorf("failed to read the table schema: %s", resp)
-	}
-	dataStream <- event
+	decodedEvents := make(chan CDCEvent)
 
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
+
+		if err := c.decodeEvents(ctx, decodedEvents); err != nil {
+			log.Printf("An error happened while decoding CDC events: %v\n", err)
+			close(decodedEvents)
+			return
+		}
+		return
+	}()
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+
 		for {
-			event, err = c.decodeData(dec)
-			if err != nil {
-				log.Printf("Failed to scan data: %v", err)
-				close(dataStream)
+			select {
+			case <-ctx.Done():
+				c.Close()
 				return
+			case e, ok := <-decodedEvents:
+				if !ok {
+					close(dataStream)
+					return
+				}
+				dataStream <- e
 			}
-			dataStream <- event
 		}
 	}()
 
 	return dataStream, nil
 }
 
-func (c *CDCClient) decodeData(dec *json.Decoder) (CDCEvent, error) {
-	var data map[string]interface{}
-	err := dec.Decode(&data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode the CDC event: %w", err)
-	}
-
-	// Data has already been decoded through the JSON decoder therefore
-	// there's no way something could go wrong while marshalling :)
-	b, _ := json.Marshal(data)
-
-	if _, ok := data["domain"]; ok {
-		dmlEvent, err := c.decodeDMLEvent(b)
+func (c *CDCClient) decodeEvents(ctx context.Context, dataStream chan<- CDCEvent) error {
+	var readSchema bool
+	dec := json.NewDecoder(c.conn)
+	for {
+		var data map[string]interface{}
+		err := dec.Decode(&data)
 		if err != nil {
-			return nil, err
+			// The first read after requesting data from a database table should
+			// read the table schema. However if the .avro file associated to the
+			// table is not present in the specified avrodir on the filesystem
+			// where MaxScale is running, an error is returned and should be read
+			// over the TCP connection.
+			if !readSchema {
+				resp, err := readResponse(dec.Buffered())
+				if err != nil {
+					return fmt.Errorf("failed to read the .avro file missing error: %w", err)
+				}
+				log.Printf("Failed to read the table schema: %s\n", resp)
+				continue
+			}
+
+			return fmt.Errorf("failed to decode the CDC event: %w", err)
 		}
-		return dmlEvent, nil
-	} else {
-		ddlEvent, err := c.decodeDDLEvent(b)
-		if err != nil {
-			return nil, err
+
+		if !readSchema {
+			readSchema = true
 		}
-		return ddlEvent, nil
+
+		// Data has already been decoded through the JSON decoder therefore
+		// there's no way something could go wrong while marshalling :)
+		b, _ := json.Marshal(data)
+
+		var event CDCEvent
+		if _, ok := data["domain"]; ok {
+			if event, err = c.decodeDMLEvent(b); err != nil {
+				return fmt.Errorf("failed to decode DML event: %v\n", err)
+			}
+		} else {
+			if event, err = c.decodeDDLEvent(b); err != nil {
+				return fmt.Errorf("failed to decode DDL event: %v\n", err)
+			}
+		}
+		dataStream <- event
 	}
 }
 
@@ -322,8 +339,9 @@ func (c *CDCClient) decodeDDLEvent(data []byte) (*DDLEvent, error) {
 
 func (c *CDCClient) Close() error {
 	if c.conn != nil {
-		return c.conn.Close()
+		c.conn.Close()
 	}
+	c.wg.Wait()
 	return nil
 }
 

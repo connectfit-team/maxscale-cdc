@@ -51,15 +51,15 @@ func TestCDCClient_RequestData_FailsIfEmptyUUID(t *testing.T) {
 	}
 }
 
-func TestCDCClient_RequestData_ReturnsNoEventIfNonExistingTable(t *testing.T) {
+func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
 	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
 
 	_, err := client.RequestData(context.Background(), "foo", "bar")
-	if err == nil {
-		t.Fatalf("Should return an error when given wrong database and table: %v", err)
+	if err != nil {
+		t.Fatalf("Should not return an error when given wrong database and table: %v", err)
 	}
 	defer client.Close()
 }

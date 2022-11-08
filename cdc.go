@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -26,19 +27,21 @@ const (
 	defaultWriteTimeout = time.Second * 5
 )
 
-type cdcClientOptions struct {
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	dialTimeout  time.Duration
+var (
+	defaultLogger = log.New(os.Stdout, "MaxScale CDC client: ", log.LstdFlags)
+)
+
+type Logger interface {
+	Printf(format string, args ...interface{})
 }
 
 // CDCClientOption is a function option used to parameterize a CDC client.
-type CDCClientOption func(*cdcClientOptions)
+type CDCClientOption func(*CDCClient)
 
 // WithDialTimeout sets the timeout of the dial call when creating the
 // connection with the MaxScale protocol listener.
 func WithDialTimeout(timeout time.Duration) CDCClientOption {
-	return func(co *cdcClientOptions) {
+	return func(co *CDCClient) {
 		co.readTimeout = timeout
 	}
 }
@@ -46,7 +49,7 @@ func WithDialTimeout(timeout time.Duration) CDCClientOption {
 // WithReadTimeout sets the timeout for all read calls over the connection
 // with the MaxScale protocol listener.
 func WithReadTimeout(timeout time.Duration) CDCClientOption {
-	return func(co *cdcClientOptions) {
+	return func(co *CDCClient) {
 		co.readTimeout = timeout
 	}
 }
@@ -54,8 +57,14 @@ func WithReadTimeout(timeout time.Duration) CDCClientOption {
 // WithReadTimeout sets the timeout for all write calls over the connection
 // with the MaxScale protocol listener.
 func WithWriteTimeout(timeout time.Duration) CDCClientOption {
-	return func(co *cdcClientOptions) {
+	return func(co *CDCClient) {
 		co.readTimeout = timeout
+	}
+}
+
+func WithLogger(logger Logger) CDCClientOption {
+	return func(co *CDCClient) {
+		co.logger = logger
 	}
 }
 
@@ -66,8 +75,12 @@ type CDCClient struct {
 	password string
 	uuid     string
 	conn     net.Conn
-	options  cdcClientOptions
 	wg       sync.WaitGroup
+
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	dialTimeout  time.Duration
+	logger       Logger
 }
 
 // NewCDCClient returns a newly created CDCClient which will connect to the
@@ -75,19 +88,18 @@ type CDCClient struct {
 // the given credentials and register with uuid.
 func NewCDCClient(address, user, password, uuid string, opts ...CDCClientOption) *CDCClient {
 	c := &CDCClient{
-		address:  address,
-		user:     user,
-		password: password,
-		uuid:     uuid,
-		options: cdcClientOptions{
-			dialTimeout:  defaultDialTimeout,
-			readTimeout:  defaultReadTimeout,
-			writeTimeout: defaultWriteTimeout,
-		},
+		address:      address,
+		user:         user,
+		password:     password,
+		uuid:         uuid,
+		dialTimeout:  defaultDialTimeout,
+		readTimeout:  defaultReadTimeout,
+		writeTimeout: defaultWriteTimeout,
+		logger:       defaultLogger,
 	}
 
 	for _, opt := range opts {
-		opt(&c.options)
+		opt(c)
 	}
 
 	return c
@@ -122,7 +134,7 @@ func (c *CDCClient) RequestData(ctx context.Context, database, table string, opt
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
 func (c *CDCClient) connect() error {
 	dialer := &net.Dialer{
-		Timeout: c.options.dialTimeout,
+		Timeout: c.dialTimeout,
 	}
 	conn, err := dialer.Dial("tcp", c.address)
 	if err != nil {
@@ -142,14 +154,14 @@ func (c *CDCClient) authenticate() error {
 		return err
 	}
 
-	if err = c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
+	if err = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
 	if _, err = c.conn.Write(authMsg); err != nil {
 		return fmt.Errorf("could not write the authentication message to the connection: %w", err)
 	}
 
-	if err = c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
+	if err = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 		return fmt.Errorf("could not set read deadline to the future read call on the connection: %w", err)
 	}
 	return c.checkResponse()
@@ -159,14 +171,14 @@ func (c *CDCClient) authenticate() error {
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#registration_1
 func (c *CDCClient) register() error {
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
 	if _, err := c.conn.Write([]byte("REGISTER UUID=" + c.uuid + ", TYPE=JSON")); err != nil {
 		return fmt.Errorf("could not write UUID %s to the connection: %w", c.uuid, err)
 	}
 
-	if err := c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 		return fmt.Errorf("could not set read deadline to the future write call on the connection: %w", err)
 	}
 
@@ -214,7 +226,7 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		}
 	}
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		return nil, fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
 	if _, err := c.conn.Write(requestDataCmd.Bytes()); err != nil {
@@ -232,7 +244,7 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		defer c.wg.Done()
 
 		if err := c.decodeEvents(decodedEvents); err != nil {
-			log.Printf("An error happened while decoding CDC events: %v\n", err)
+			c.logger.Printf("An error happened while decoding CDC events: %v\n", err)
 		}
 		close(decodedEvents)
 	}()
@@ -266,7 +278,7 @@ func (c *CDCClient) decodeEvents(dataStream chan<- CDCEvent) error {
 
 		// If the request for data is rejected, an error will be sent instead of the table schema.
 		if !readSchema && bytes.HasPrefix(token, errPrefix) {
-			log.Printf("Failed to read the table schema: %s", token)
+			c.logger.Printf("Failed to read the table schema: %s", token)
 			continue
 		}
 

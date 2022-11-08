@@ -1,6 +1,7 @@
 package maxscale
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha1"
@@ -11,10 +12,11 @@ import (
 	"io"
 	"log"
 	"net"
-	"strings"
 	"sync"
 	"time"
 )
+
+var errPrefix = []byte("ERR")
 
 const (
 	defaultReadSize = 4096
@@ -231,10 +233,8 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 
 		if err := c.decodeEvents(decodedEvents); err != nil {
 			log.Printf("An error happened while decoding CDC events: %v\n", err)
-			close(decodedEvents)
-			return
 		}
-		return
+		close(decodedEvents)
 	}()
 
 	c.wg.Add(1)
@@ -244,8 +244,7 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		for {
 			select {
 			case <-ctx.Done():
-				c.Close()
-				return
+				c.conn.Close()
 			case e, ok := <-decodedEvents:
 				if !ok {
 					close(dataStream)
@@ -260,45 +259,37 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 }
 
 func (c *CDCClient) decodeEvents(dataStream chan<- CDCEvent) error {
-	dec := json.NewDecoder(c.conn)
-	for {
-		var data map[string]interface{}
-		err := dec.Decode(&data)
-		if err != nil {
-			// If the AVRO file associated to the table does not not exists an error
-			// is raised by MaxScale. Since it is not a JSON error we have to read it
-			// manually and then advance the offset to the next JSON object.
-			var serr *json.SyntaxError
-			if errors.As(err, &serr) {
-				resp, err := readResponse(dec.Buffered())
-				if err != nil {
-					return fmt.Errorf("failed to read the .avro file missing error: %w", err)
-				}
-				log.Printf("Failed to read the table schema: %s", resp)
+	var readSchema bool
+	scanner := bufio.NewScanner(c.conn)
+	for scanner.Scan() {
+		token := scanner.Bytes()
 
-				// Create a new JSON decoder which starts reading after the error offset.
-				dec = json.NewDecoder(c.conn)
-				continue
-			}
-			return fmt.Errorf("failed to decode the CDC event: %w", err)
+		// If the request for data is rejected, an error will be sent instead of the table schema.
+		if !readSchema && bytes.HasPrefix(token, errPrefix) {
+			log.Printf("Failed to read the table schema: %s", token)
+			continue
 		}
 
-		// Data has already been decoded through the JSON decoder therefore
-		// there's no way something could go wrong while marshalling :)
-		b, _ := json.Marshal(data)
+		if !readSchema {
+			readSchema = true
+		}
 
-		var event CDCEvent
-		if _, ok := data["domain"]; ok {
-			if event, err = c.decodeDMLEvent(b); err != nil {
+		var (
+			event CDCEvent
+			err   error
+		)
+		if bytes.HasPrefix(token, []byte(`{"domain":`)) {
+			if event, err = c.decodeDMLEvent(token); err != nil {
 				return fmt.Errorf("failed to decode DML event: %v\n", err)
 			}
 		} else {
-			if event, err = c.decodeDDLEvent(b); err != nil {
+			if event, err = c.decodeDDLEvent(token); err != nil {
 				return fmt.Errorf("failed to decode DDL event: %v\n", err)
 			}
 		}
 		dataStream <- event
 	}
+	return nil
 }
 
 func (c *CDCClient) decodeDMLEvent(data []byte) (*DMLEvent, error) {
@@ -307,6 +298,8 @@ func (c *CDCClient) decodeDMLEvent(data []byte) (*DMLEvent, error) {
 		return nil, fmt.Errorf("failed to unmarshal the DML event data into a go value: %w", err)
 	}
 
+	// TODO: Might be better to just save the raw data rather than a map.
+	//
 	// The table data are all the DML fields minus the fields that are not
 	// columms of the table.
 	if err := json.Unmarshal(data, &event.TableData); err != nil {
@@ -373,21 +366,18 @@ func (c *CDCClient) checkResponse() error {
 	}
 
 	if isErrorResponse(resp) {
-		return errors.New(resp)
+		return errors.New(string(resp))
 	}
 
 	return nil
 }
 
-func readResponse(r io.Reader) (string, error) {
-	b := make([]byte, defaultReadSize)
-	n, err := r.Read(b)
-	if err != nil {
-		return "", err
-	}
-	return string(b[:n]), nil
+func readResponse(r io.Reader) ([]byte, error) {
+	s := bufio.NewScanner(r)
+	s.Scan()
+	return s.Bytes(), s.Err()
 }
 
-func isErrorResponse(resp string) bool {
-	return strings.Contains(strings.ToLower(resp), "err")
+func isErrorResponse(resp []byte) bool {
+	return bytes.HasPrefix(resp, errPrefix)
 }

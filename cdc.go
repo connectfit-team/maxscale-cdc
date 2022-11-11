@@ -129,6 +129,8 @@ type RequestDataOptions struct {
 	gtid    string
 }
 
+// TODO: Return 2 channels for each type of event ?
+//
 // RequestData starts fetching events from the given table in the given database.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
@@ -210,7 +212,7 @@ func (c *CDCClient) register() error {
 }
 
 func (c *CDCClient) requestData(database, table, version, gtid string) (<-chan CDCEvent, error) {
-	dataStream := make(chan CDCEvent, 1)
+	data := make(chan CDCEvent, 1)
 
 	var requestDataCmd bytes.Buffer
 	if _, err := requestDataCmd.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
@@ -238,22 +240,20 @@ func (c *CDCClient) requestData(database, table, version, gtid string) (<-chan C
 		return nil, fmt.Errorf("could not reset the read deadline on the connection: %w", err)
 	}
 
-	// decodedEvents := make(chan CDCEvent, 1)
-
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 
-		if err := c.decodeEvents(dataStream); err != nil {
+		if err := c.handleEvents(data); err != nil {
 			c.logger.Printf("An error happened while decoding CDC events: %v\n", err)
 		}
-		close(dataStream)
+		close(data)
 	}()
 
-	return dataStream, nil
+	return data, nil
 }
 
-func (c *CDCClient) decodeEvents(dataStream chan<- CDCEvent) error {
+func (c *CDCClient) handleEvents(data chan<- CDCEvent) error {
 	var readSchema bool
 	scanner := bufio.NewScanner(c.conn)
 	for scanner.Scan() {
@@ -269,22 +269,30 @@ func (c *CDCClient) decodeEvents(dataStream chan<- CDCEvent) error {
 			readSchema = true
 		}
 
-		var (
-			event CDCEvent
-			err   error
-		)
-		if bytes.HasPrefix(token, []byte(`{"domain":`)) {
-			if event, err = c.decodeDMLEvent(token); err != nil {
-				return fmt.Errorf("failed to decode DML event: %v\n", err)
-			}
-		} else {
-			if event, err = c.decodeDDLEvent(token); err != nil {
-				return fmt.Errorf("failed to decode DDL event: %v\n", err)
-			}
+		event, err := c.decodeEvent(token)
+		if err != nil {
+			return err
 		}
-		dataStream <- event
+		data <- event
 	}
 	return scanner.Err()
+}
+
+func (c *CDCClient) decodeEvent(data []byte) (CDCEvent, error) {
+	var (
+		event CDCEvent
+		err   error
+	)
+	if bytes.HasPrefix(data, []byte(`{"domain":`)) {
+		if event, err = c.decodeDMLEvent(data); err != nil {
+			return nil, fmt.Errorf("failed to decode DML event: %v\n", err)
+		}
+	} else {
+		if event, err = c.decodeDDLEvent(data); err != nil {
+			return nil, fmt.Errorf("failed to decode DDL event: %v\n", err)
+		}
+	}
+	return event, nil
 }
 
 func (c *CDCClient) decodeDMLEvent(data []byte) (*DMLEvent, error) {
@@ -293,21 +301,7 @@ func (c *CDCClient) decodeDMLEvent(data []byte) (*DMLEvent, error) {
 		return nil, fmt.Errorf("failed to unmarshal the DML event data into a go value: %w", err)
 	}
 
-	// TODO: Might be better to just save the raw data rather than a map.
-	//
-	// The table data are all the DML fields minus the fields that are not
-	// columms of the table.
-	if err := json.Unmarshal(data, &event.TableData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal the table data into a go value: %w", err)
-	}
-	delete(event.TableData, "domain")
-	delete(event.TableData, "server_id")
-	delete(event.TableData, "sequence")
-	delete(event.TableData, "event_number")
-	delete(event.TableData, "timestamp")
-	delete(event.TableData, "event_type")
-	delete(event.TableData, "table_name")
-	delete(event.TableData, "table_schema")
+	event.Raw = data
 
 	return &event, nil
 }

@@ -155,15 +155,15 @@ func (DDLEventFieldTypeString) Type() int { return TypeDDLEventFieldFieldString 
 //
 // See: https://github.com/mariadb-corporation/MaxScale/blob/maxscale-6.2.4/Documentation/Routers/KafkaCDC.md#overview
 type DMLEvent struct {
-	Domain      int                    `json:"domain"`
-	ServerID    int                    `json:"server_id"`
-	Sequence    int                    `json:"sequence"`
-	EventNumber int                    `json:"event_number"`
-	Timestamp   int64                  `json:"timestamp"`
-	EventType   string                 `json:"event_type"`
-	TableName   string                 `json:"table_name"`
-	TableSchema string                 `json:"table_schema"`
-	TableData   map[string]interface{} `json:"-"`
+	Domain      int    `json:"domain"`
+	ServerID    int    `json:"server_id"`
+	Sequence    int    `json:"sequence"`
+	EventNumber int    `json:"event_number"`
+	Timestamp   int64  `json:"timestamp"`
+	EventType   string `json:"event_type"`
+	TableName   string `json:"table_name"`
+	TableSchema string `json:"table_schema"`
+	Raw         []byte `json:"-"`
 }
 
 func (*DMLEvent) Type() int { return TypeDMLEvent }

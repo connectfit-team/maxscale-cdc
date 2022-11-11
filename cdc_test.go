@@ -135,9 +135,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 		Sequence:    7,
 		EventNumber: 1,
 		EventType:   "insert",
-		TableData: map[string]interface{}{
-			"id": float64(1),
-		},
+		Raw:         []byte(`{"domain": 0, "server_id": 3000, "sequence": 7, "event_number": 1, "timestamp": 1668149687, "event_type": "insert", "id": 1}`),
 	}
 	dmlEvent := event.(*maxscale.DMLEvent)
 	// TODO: Find a way to compare timestamp as well
@@ -226,9 +224,7 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 		Sequence:    8,
 		EventNumber: 1,
 		EventType:   "insert",
-		TableData: map[string]interface{}{
-			"id": float64(2),
-		},
+		Raw:         []byte(`{"domain": 0, "server_id": 3000, "sequence": 8, "event_number": 1, "timestamp": 1668149687, "event_type": "insert", "id": 2}`),
 	}
 	dmlEvent := event.(*maxscale.DMLEvent)
 	// TODO: Find a way to compare timestamp as well

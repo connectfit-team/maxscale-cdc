@@ -117,6 +117,7 @@ func (f *DDLEventField) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		f.Type = enumType
+
 	default:
 		return fmt.Errorf("unknown type %T in event field type definition", value)
 	}

@@ -3,7 +3,7 @@ services:
     test-runner:
         build:
             context: .
-            dockerfile: ./Test.Dockerfile
+            dockerfile: ./Dockerfile.test
         depends_on:
             mariadb:
                 condition: service_healthy

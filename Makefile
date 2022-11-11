@@ -1,13 +1,6 @@
 COVERAGE_OUTPUT	=	coverage.out
 
-DOCKER_FILE_TEST = Test.Dockerfile
-
 DOCKER_COMPOSE_FILE_TEST = docker-compose.yml
-
-.PHONY: build
-build: vendor
-	@echo "> Building Docker image..."
-	@docker build -t $(NAME) .
 
 .PHONY: integration-test
 integration-test: vendor

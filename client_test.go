@@ -1,18 +1,23 @@
 //go:build integration
 
-package maxscale_test
+package cdc_test
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"testing"
 
-	"github.com/connectfit-team/maxscale-cdc-client"
+	cdc "github.com/connectfit-team/maxscale-cdc"
 	"github.com/google/go-cmp/cmp"
 )
 
+type test struct {
+	ID int `json:"id"`
+}
+
 func TestCDCClient_RequestData_FailsIfWrongAddress(t *testing.T) {
-	client := maxscale.NewCDCClient("wrong address", "", "", "")
+	client := cdc.NewClient("wrong address", "", "", "")
 
 	_, err := client.RequestData("", "")
 	if err == nil {
@@ -23,7 +28,7 @@ func TestCDCClient_RequestData_FailsIfWrongAddress(t *testing.T) {
 func TestCDCClient_RequestData_FailsWithWrongCredentials(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	client := maxscale.NewCDCClient(addr, "wrong", "credentials", "")
+	client := cdc.NewClient(addr, "wrong", "credentials", "")
 
 	_, err := client.RequestData("", "")
 	if err == nil {
@@ -35,7 +40,7 @@ func TestCDCClient_RequestData_FailsIfEmptyUUID(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, "")
+	client := cdc.NewClient(addr, user, password, "")
 
 	_, err := client.RequestData("", "")
 	if err == nil {
@@ -47,7 +52,7 @@ func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) 
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, "test-uuid")
+	client := cdc.NewClient(addr, user, password, "test-uuid")
 
 	_, err := client.RequestData("test", "bar")
 	if err != nil {
@@ -60,7 +65,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, "test-uuid")
+	client := cdc.NewClient(addr, user, password, "test-uuid")
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
 	data, err := client.RequestData(database, table)
@@ -70,7 +75,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 	defer client.Stop()
 
 	event := <-data
-	expectedDDLEvent := &maxscale.DDLEvent{
+	expectedDDLEvent := &cdc.DDLEvent{
 		Namespace: "MaxScaleChangeDataSchema.avro",
 		EventType: "record",
 		Name:      "ChangeRecord",
@@ -78,30 +83,30 @@ func TestCDCClient_RequestData(t *testing.T) {
 		Database:  "test",
 		Version:   1,
 		EventGTID: "0-3000-6",
-		Fields: []maxscale.DDLEventField{
+		Fields: []cdc.DDLEventField{
 			{
 				Name: "domain",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "server_id",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "sequence",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "event_number",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "timestamp",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "event_type",
-				Type: maxscale.DDLEventFieldTypeEnum{
+				Type: cdc.DDLEventFieldTypeEnum{
 					FieldType: "enum",
 					Name:      "EVENT_TYPES",
 					Symbols: []string{
@@ -114,7 +119,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 			},
 			{
 				Name: "id",
-				Type: maxscale.DDLEventFieldTypeTableData{
+				Type: cdc.DDLEventFieldTypeTableData{
 					"null",
 					"int",
 				},
@@ -123,43 +128,55 @@ func TestCDCClient_RequestData(t *testing.T) {
 			},
 		},
 	}
-	ddlEvent := event.(*maxscale.DDLEvent)
+	ddlEvent := event.(*cdc.DDLEvent)
 	if !cmp.Equal(expectedDDLEvent, ddlEvent) {
 		t.Fatalf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
 	}
 
 	event = <-data
-	expectedDMLEvent := &maxscale.DMLEvent{
+	dmlEvent := event.(*cdc.DMLEvent)
+	var insertedRow test
+	if err = json.Unmarshal(dmlEvent.Raw, &insertedRow); err != nil {
+		t.Fatalf("Should be able to unmarshal the raw data from the captured event to JSON: %v", err)
+	}
+
+	// Cannot compare these fields since we cannot predict the exact timestamp
+	dmlEvent.Timestamp = 0
+	dmlEvent.Raw = nil
+
+	expectedDMLEvent := &cdc.DMLEvent{
 		Domain:      0,
 		ServerID:    3000,
 		Sequence:    7,
 		EventNumber: 1,
 		EventType:   "insert",
-		Raw:         []byte(`{"domain": 0, "server_id": 3000, "sequence": 7, "event_number": 1, "timestamp": 1668149687, "event_type": "insert", "id": 1}`),
 	}
-	dmlEvent := event.(*maxscale.DMLEvent)
-	// TODO: Find a way to compare timestamp as well
-	dmlEvent.Timestamp = 0
 	if !cmp.Equal(expectedDMLEvent, dmlEvent) {
 		t.Fatalf("Captured DML event differs from the expected one:\n%s", cmp.Diff(expectedDMLEvent, dmlEvent))
 	}
+
+	expectedID := 1
+	if insertedRow.ID != expectedID {
+		t.Fatalf("The inserted row's id column should be equal to %d", expectedID)
+	}
+
 }
 
 func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, "test-uuid")
+	client := cdc.NewClient(addr, user, password, "test-uuid")
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
-	data, err := client.RequestData(database, table, maxscale.WithGTID("0-3000-8"))
+	data, err := client.RequestData(database, table, cdc.WithGTID("0-3000-8"))
 	if err != nil {
 		t.Fatalf("Failed to request data: %v", err)
 	}
 	defer client.Stop()
 
 	event := <-data
-	expectedDDLEvent := &maxscale.DDLEvent{
+	expectedDDLEvent := &cdc.DDLEvent{
 		Namespace: "MaxScaleChangeDataSchema.avro",
 		EventType: "record",
 		Name:      "ChangeRecord",
@@ -167,30 +184,30 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 		Database:  "test",
 		Version:   1,
 		EventGTID: "0-3000-6",
-		Fields: []maxscale.DDLEventField{
+		Fields: []cdc.DDLEventField{
 			{
 				Name: "domain",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "server_id",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "sequence",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "event_number",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "timestamp",
-				Type: maxscale.DDLEventFieldTypeString("int"),
+				Type: cdc.DDLEventFieldTypeString("int"),
 			},
 			{
 				Name: "event_type",
-				Type: maxscale.DDLEventFieldTypeEnum{
+				Type: cdc.DDLEventFieldTypeEnum{
 					FieldType: "enum",
 					Name:      "EVENT_TYPES",
 					Symbols: []string{
@@ -203,7 +220,7 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 			},
 			{
 				Name: "id",
-				Type: maxscale.DDLEventFieldTypeTableData{
+				Type: cdc.DDLEventFieldTypeTableData{
 					"null",
 					"int",
 				},
@@ -212,24 +229,35 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 			},
 		},
 	}
-	ddlEvent := event.(*maxscale.DDLEvent)
+	ddlEvent := event.(*cdc.DDLEvent)
 	if !cmp.Equal(expectedDDLEvent, ddlEvent) {
 		t.Fatalf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
 	}
 
 	event = <-data
-	expectedDMLEvent := &maxscale.DMLEvent{
+	dmlEvent := event.(*cdc.DMLEvent)
+	var insertedRow test
+	if err = json.Unmarshal(dmlEvent.Raw, &insertedRow); err != nil {
+		t.Fatalf("Should be able to unmarshal the raw data from the captured event to JSON: %v", err)
+	}
+
+	// Cannot compare these fields since we cannot predict the exact timestamp
+	dmlEvent.Timestamp = 0
+	dmlEvent.Raw = nil
+
+	expectedDMLEvent := &cdc.DMLEvent{
 		Domain:      0,
 		ServerID:    3000,
 		Sequence:    8,
 		EventNumber: 1,
 		EventType:   "insert",
-		Raw:         []byte(`{"domain": 0, "server_id": 3000, "sequence": 8, "event_number": 1, "timestamp": 1668149687, "event_type": "insert", "id": 2}`),
 	}
-	dmlEvent := event.(*maxscale.DMLEvent)
-	// TODO: Find a way to compare timestamp as well
-	dmlEvent.Timestamp = 0
 	if !cmp.Equal(expectedDMLEvent, dmlEvent) {
 		t.Fatalf("Captured DML event differs from the expected one:\n%s", cmp.Diff(expectedDMLEvent, dmlEvent))
+	}
+
+	expectedID := 2
+	if insertedRow.ID != expectedID {
+		t.Fatalf("The inserted row's id column should be equal to %d", expectedID)
 	}
 }

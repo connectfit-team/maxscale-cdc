@@ -1,4 +1,4 @@
-module github.com/connectfit-team/maxscale-cdc-client
+module github.com/connectfit-team/maxscale-cdc
 
 go 1.19
 

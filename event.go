@@ -1,4 +1,4 @@
-package maxscale
+package cdc
 
 import (
 	"encoding/json"
@@ -10,8 +10,8 @@ const (
 	TypeDMLEvent
 )
 
-// CDCEvent represents data changes within MariaDB(DDL or DML).
-type CDCEvent interface {
+// Event represents data changes within MariaDB(DDL or DML).
+type Event interface {
 	// Type returns the type of data change captured.
 	Type() int
 	// GTID returns the GTID associated to the event.

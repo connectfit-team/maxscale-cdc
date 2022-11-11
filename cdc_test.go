@@ -3,7 +3,6 @@
 package maxscale_test
 
 import (
-	"context"
 	"net"
 	"os"
 	"testing"
@@ -14,38 +13,32 @@ import (
 )
 
 func TestCDCClient_RequestData_FailsIfWrongAddress(t *testing.T) {
-	ctx := context.Background()
-
 	client := maxscale.NewCDCClient("wrong address", "", "", "")
 
-	_, err := client.RequestData(ctx, "", "")
+	_, err := client.RequestData("", "")
 	if err == nil {
 		t.Fatalf("Should return an error when given a wrong address: %v", err)
 	}
 }
 
 func TestCDCClient_RequestData_FailsWithWrongCredentials(t *testing.T) {
-	ctx := context.Background()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	client := maxscale.NewCDCClient(addr, "wrong", "credentials", "")
 
-	_, err := client.RequestData(ctx, "", "")
+	_, err := client.RequestData("", "")
 	if err == nil {
 		t.Fatalf("Should return an error when given wrong credentials: %v", err)
 	}
 }
 
 func TestCDCClient_RequestData_FailsIfEmptyUUID(t *testing.T) {
-	ctx := context.Background()
-
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
 	client := maxscale.NewCDCClient(addr, user, password, "")
 
-	_, err := client.RequestData(ctx, "", "")
+	_, err := client.RequestData("", "")
 	if err == nil {
 		t.Fatalf("Should return an error when given empty UUID: %v", err)
 	}
@@ -57,11 +50,11 @@ func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) 
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
 	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
 
-	_, err := client.RequestData(context.Background(), "test", "bar")
+	_, err := client.RequestData("test", "bar")
 	if err != nil {
 		t.Fatalf("Should not return an error when given wrong database and table: %v", err)
 	}
-	defer client.Close()
+	defer client.Stop()
 }
 
 func TestCDCClient_RequestData(t *testing.T) {
@@ -71,11 +64,11 @@ func TestCDCClient_RequestData(t *testing.T) {
 	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
-	data, err := client.RequestData(context.Background(), database, table)
+	data, err := client.RequestData(database, table)
 	if err != nil {
 		t.Fatalf("Failed to request data: %v", err)
 	}
-	defer client.Close()
+	defer client.Stop()
 
 	event := <-data
 	expectedDDLEvent := &maxscale.DDLEvent{
@@ -162,11 +155,11 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
-	data, err := client.RequestData(context.Background(), database, table, maxscale.WithGTID("0-3000-8"))
+	data, err := client.RequestData(database, table, maxscale.WithGTID("0-3000-8"))
 	if err != nil {
 		t.Fatalf("Failed to request data: %v", err)
 	}
-	defer client.Close()
+	defer client.Stop()
 
 	event := <-data
 	expectedDDLEvent := &maxscale.DDLEvent{

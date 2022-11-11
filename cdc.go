@@ -3,7 +3,6 @@ package maxscale
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -12,12 +11,17 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"sync"
 	"time"
 )
 
+var ErrNotConnected = errors.New("not connected")
+
 var errPrefix = []byte("ERR")
+
+var (
+	defaultLogger = log.New(io.Discard, "", 0)
+)
 
 const (
 	defaultReadSize = 4096
@@ -27,10 +31,7 @@ const (
 	defaultWriteTimeout = time.Second * 5
 )
 
-var (
-	defaultLogger = log.New(os.Stdout, "MaxScale CDC client: ", log.LstdFlags)
-)
-
+// Logger represents any logging object which support formatting.
 type Logger interface {
 	Printf(format string, args ...interface{})
 }
@@ -105,10 +106,33 @@ func NewCDCClient(address, user, password, uuid string, opts ...CDCClientOption)
 	return c
 }
 
+// RequestDataOption is a functional option to parameterize a RequestData call.
+type RequestDataOption func(*RequestDataOptions)
+
+// WithVersion specifies the version of the table from which the event will be streamed.
+func WithVersion(version string) RequestDataOption {
+	return func(rdo *RequestDataOptions) {
+		rdo.version = version
+	}
+}
+
+// WithGTID specifies the GTID position where the events should start being streamed.
+func WithGTID(gtid string) RequestDataOption {
+	return func(rdo *RequestDataOptions) {
+		rdo.gtid = gtid
+	}
+}
+
+// RequestDataOptions contains the optional parameters of a RequestData call.
+type RequestDataOptions struct {
+	version string
+	gtid    string
+}
+
 // RequestData starts fetching events from the given table in the given database.
 //
 // See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
-func (c *CDCClient) RequestData(ctx context.Context, database, table string, opts ...RequestDataOption) (<-chan CDCEvent, error) {
+func (c *CDCClient) RequestData(database, table string, opts ...RequestDataOption) (<-chan CDCEvent, error) {
 	if err := c.connect(); err != nil {
 		return nil, fmt.Errorf("failed to establish connection: %w", err)
 	}
@@ -125,7 +149,7 @@ func (c *CDCClient) RequestData(ctx context.Context, database, table string, opt
 	for _, opt := range opts {
 		opt(&options)
 	}
-	return c.requestData(ctx, database, table, options.version, options.gtid)
+	return c.requestData(database, table, options.version, options.gtid)
 }
 
 // connect creates a new connection with the MaxScale CDC protocol listener
@@ -185,30 +209,7 @@ func (c *CDCClient) register() error {
 	return c.checkResponse()
 }
 
-// RequestDataOption is a functional option to parameterize a RequestData call.
-type RequestDataOption func(*RequestDataOptions)
-
-// WithVersion specifies the version of the table from which the event will be streamed.
-func WithVersion(version string) RequestDataOption {
-	return func(rdo *RequestDataOptions) {
-		rdo.version = version
-	}
-}
-
-// WithGTID specifies the GTID position where the events should start being streamed.
-func WithGTID(gtid string) RequestDataOption {
-	return func(rdo *RequestDataOptions) {
-		rdo.gtid = gtid
-	}
-}
-
-// RequestDataOptions contains the optional parameters of a RequestData call.
-type RequestDataOptions struct {
-	version string
-	gtid    string
-}
-
-func (c *CDCClient) requestData(ctx context.Context, database, table, version, gtid string) (<-chan CDCEvent, error) {
+func (c *CDCClient) requestData(database, table, version, gtid string) (<-chan CDCEvent, error) {
 	dataStream := make(chan CDCEvent, 1)
 
 	var requestDataCmd bytes.Buffer
@@ -237,34 +238,16 @@ func (c *CDCClient) requestData(ctx context.Context, database, table, version, g
 		return nil, fmt.Errorf("could not reset the read deadline on the connection: %w", err)
 	}
 
-	decodedEvents := make(chan CDCEvent, 1)
+	// decodedEvents := make(chan CDCEvent, 1)
 
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 
-		if err := c.decodeEvents(decodedEvents); err != nil {
+		if err := c.decodeEvents(dataStream); err != nil {
 			c.logger.Printf("An error happened while decoding CDC events: %v\n", err)
 		}
-		close(decodedEvents)
-	}()
-
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-
-		for {
-			select {
-			case <-ctx.Done():
-				c.conn.Close()
-			case e, ok := <-decodedEvents:
-				if !ok {
-					close(dataStream)
-					return
-				}
-				dataStream <- e
-			}
-		}
+		close(dataStream)
 	}()
 
 	return dataStream, nil
@@ -301,7 +284,7 @@ func (c *CDCClient) decodeEvents(dataStream chan<- CDCEvent) error {
 		}
 		dataStream <- event
 	}
-	return nil
+	return scanner.Err()
 }
 
 func (c *CDCClient) decodeDMLEvent(data []byte) (*DMLEvent, error) {
@@ -338,12 +321,17 @@ func (c *CDCClient) decodeDDLEvent(data []byte) (*DDLEvent, error) {
 	return &event, nil
 }
 
-func (c *CDCClient) Close() error {
-	if c.conn != nil {
-		c.conn.Close()
+func (c *CDCClient) Stop() error {
+	if c.conn == nil {
+		return ErrNotConnected
 	}
+
+	err := c.conn.Close()
+
 	c.wg.Wait()
-	return nil
+
+	c.conn = nil
+	return err
 }
 
 func (c *CDCClient) formatAuthenticationMessage(user, password string) ([]byte, error) {

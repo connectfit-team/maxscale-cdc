@@ -9,7 +9,6 @@ import (
 
 	"github.com/connectfit-team/maxscale-cdc-client"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/uuid"
 )
 
 func TestCDCClient_RequestData_FailsIfWrongAddress(t *testing.T) {
@@ -48,7 +47,7 @@ func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) 
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
+	client := maxscale.NewCDCClient(addr, user, password, "test-uuid")
 
 	_, err := client.RequestData("test", "bar")
 	if err != nil {
@@ -61,7 +60,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
+	client := maxscale.NewCDCClient(addr, user, password, "test-uuid")
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
 	data, err := client.RequestData(database, table)
@@ -152,7 +151,7 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := maxscale.NewCDCClient(addr, user, password, uuid.NewString())
+	client := maxscale.NewCDCClient(addr, user, password, "test-uuid")
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
 	data, err := client.RequestData(database, table, maxscale.WithGTID("0-3000-8"))

@@ -43,6 +43,6 @@ services:
         ports:
             - "4001:4001"   # CDC
         healthcheck:
-          test: bash -c "[ -f /var/lib/maxscale/avro/test.tests.000001.avro ]" # Maybe there is a better way to do this
-          interval: 5s
-          timeout: 20s
+            test: curl -I http://localhost:8989/
+            interval: 5s
+            timeout: 20s

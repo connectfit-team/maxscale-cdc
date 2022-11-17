@@ -163,11 +163,27 @@ type DMLEvent struct {
 	EventType   string `json:"event_type"`
 	TableName   string `json:"table_name"`
 	TableSchema string `json:"table_schema"`
-	Raw         []byte `json:"-"`
+	Raw         []byte `json:"raw"`
 }
 
 func (*DMLEvent) Type() int { return TypeDMLEvent }
 
 func (e *DMLEvent) GTID() string {
 	return fmt.Sprintf("%d-%d-%d", e.Domain, e.ServerID, e.Sequence)
+}
+
+func (e *DMLEvent) TableData() (map[string]interface{}, error) {
+	var tableData map[string]interface{}
+	if err := json.Unmarshal(e.Raw, &tableData); err != nil {
+		return nil, fmt.Errorf("could not unmarshal the raw DML event: %w", err)
+	}
+	delete(tableData, "domain")
+	delete(tableData, "server_id")
+	delete(tableData, "sequence")
+	delete(tableData, "event_number")
+	delete(tableData, "timestamp")
+	delete(tableData, "event_type")
+	delete(tableData, "table_name")
+	delete(tableData, "table_schema")
+	return tableData, nil
 }

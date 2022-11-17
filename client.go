@@ -15,7 +15,11 @@ import (
 	"time"
 )
 
-var ErrNotConnected = errors.New("not connected")
+var (
+	// ErrNotConnected is returned when trying to stop the client from streaming
+	// CDC events while it is not running.
+	ErrNotConnected = errors.New("not connected")
+)
 
 var errPrefix = []byte("ERR")
 
@@ -36,40 +40,46 @@ type Logger interface {
 	Printf(format string, args ...interface{})
 }
 
+type clientOptions struct {
+	dialTimeout  time.Duration
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	logger       Logger
+}
+
 // ClientOption is a function option used to parameterize a CDC client.
-type ClientOption func(*Client)
+type ClientOption func(*clientOptions)
 
 // WithDialTimeout sets the timeout of the dial call when creating the
 // connection with the MaxScale protocol listener.
 func WithDialTimeout(timeout time.Duration) ClientOption {
-	return func(co *Client) {
+	return func(co *clientOptions) {
 		co.readTimeout = timeout
 	}
 }
 
-// WithReadTimeout sets the timeout for all read calls over the connection
-// with the MaxScale protocol listener.
+// WithReadTimeout sets the timeout for all read calls over the connection.
 func WithReadTimeout(timeout time.Duration) ClientOption {
-	return func(co *Client) {
+	return func(co *clientOptions) {
 		co.readTimeout = timeout
 	}
 }
 
-// WithReadTimeout sets the timeout for all write calls over the connection
-// with the MaxScale protocol listener.
+// WithReadTimeout sets the timeout for all write calls over the connection.
 func WithWriteTimeout(timeout time.Duration) ClientOption {
-	return func(co *Client) {
+	return func(co *clientOptions) {
 		co.readTimeout = timeout
 	}
 }
 
+// WithLogger sets the logger used by the client.
 func WithLogger(logger Logger) ClientOption {
-	return func(co *Client) {
+	return func(co *clientOptions) {
 		co.logger = logger
 	}
 }
 
-// Client represents a connection with a MaxScale CDC protocol listener.
+// Client represents a MaxScale CDC client.
 type Client struct {
 	address  string
 	user     string
@@ -77,63 +87,65 @@ type Client struct {
 	uuid     string
 	conn     net.Conn
 	wg       sync.WaitGroup
-
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	dialTimeout  time.Duration
-	logger       Logger
+	options  clientOptions
 }
 
-// NewClient returns a newly created Client which will connect to the
-// MaxScale CDC protocol listener at the given address, authenticate to it with
-// the given credentials and register with uuid.
+// NewClient returns a new MaxScale CDC Client given an address to connect to,
+// credentials to authenticate and an UUID to register the client.
 func NewClient(address, user, password, uuid string, opts ...ClientOption) *Client {
 	c := &Client{
-		address:      address,
-		user:         user,
-		password:     password,
-		uuid:         uuid,
-		dialTimeout:  defaultDialTimeout,
-		readTimeout:  defaultReadTimeout,
-		writeTimeout: defaultWriteTimeout,
-		logger:       defaultLogger,
+		address:  address,
+		user:     user,
+		password: password,
+		uuid:     uuid,
+		options: clientOptions{
+			dialTimeout:  defaultDialTimeout,
+			readTimeout:  defaultReadTimeout,
+			writeTimeout: defaultWriteTimeout,
+			logger:       defaultLogger,
+		},
 	}
 
 	for _, opt := range opts {
-		opt(c)
+		opt(&c.options)
 	}
 
 	return c
 }
 
 // RequestDataOption is a functional option to parameterize a RequestData call.
-type RequestDataOption func(*RequestDataOptions)
+type RequestDataOption func(*requestDataOptions)
 
 // WithVersion specifies the version of the table from which the event will be streamed.
 func WithVersion(version string) RequestDataOption {
-	return func(rdo *RequestDataOptions) {
+	return func(rdo *requestDataOptions) {
 		rdo.version = version
 	}
 }
 
 // WithGTID specifies the GTID position where the events should start being streamed.
 func WithGTID(gtid string) RequestDataOption {
-	return func(rdo *RequestDataOptions) {
+	return func(rdo *requestDataOptions) {
 		rdo.gtid = gtid
 	}
 }
 
-// RequestDataOptions contains the optional parameters of a RequestData call.
-type RequestDataOptions struct {
+type requestDataOptions struct {
 	version string
 	gtid    string
 }
 
-// TODO: Return 2 channels for each type of event ?
+// RequestData starts fetching events from a given table and database.
+// Optionally the version of the schema used and the GTID of the transaction
+// from which the event will start being streamed can be set through options.
 //
-// RequestData starts fetching events from the given table in the given database.
+// If the schema file associated to the table is not present on the MaxScale
+// filesystem no error is returned. Instead it logs an error and wait until it
+// gets created to start streaming events.
 //
-// See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
+// Call Stop to close the connection and release the associated ressources when done.
+//
+// Also See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
 func (c *Client) RequestData(database, table string, opts ...RequestDataOption) (<-chan Event, error) {
 	if err := c.connect(); err != nil {
 		return nil, fmt.Errorf("failed to establish connection: %w", err)
@@ -147,20 +159,32 @@ func (c *Client) RequestData(database, table string, opts ...RequestDataOption) 
 		return nil, fmt.Errorf("failed to register: %w", err)
 	}
 
-	var options RequestDataOptions
+	var options requestDataOptions
 	for _, opt := range opts {
 		opt(&options)
 	}
 	return c.requestData(database, table, options.version, options.gtid)
 }
 
-// connect creates a new connection with the MaxScale CDC protocol listener
-// listening at the given address.
-//
-// See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
+// Stop closes the open connection if any and wait for all the ressources
+// in use to be released.
+func (c *Client) Stop() error {
+	if c.conn == nil {
+		return ErrNotConnected
+	}
+
+	err := c.conn.Close()
+
+	c.wg.Wait()
+
+	c.conn = nil
+	return err
+}
+
+// See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
 func (c *Client) connect() error {
 	dialer := &net.Dialer{
-		Timeout: c.dialTimeout,
+		Timeout: c.options.dialTimeout,
 	}
 	conn, err := dialer.Dial("tcp", c.address)
 	if err != nil {
@@ -170,69 +194,65 @@ func (c *Client) connect() error {
 	return nil
 }
 
-// authenticate sends an authentication message containing the given credentials
-// to the MaxScale CDC protocol listener.
-//
-// See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
+// See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
 func (c *Client) authenticate() error {
 	authMsg, err := c.formatAuthenticationMessage(c.user, c.password)
 	if err != nil {
 		return err
 	}
 
-	if err = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+	if err = c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
 	if _, err = c.conn.Write(authMsg); err != nil {
 		return fmt.Errorf("could not write the authentication message to the connection: %w", err)
 	}
 
-	if err = c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
+	if err = c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
 		return fmt.Errorf("could not set read deadline to the future read call on the connection: %w", err)
 	}
 	return c.checkResponse()
 }
 
-// register registers the connection with the given UUID.
-//
-// See: https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#registration_1
+// See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#registration_1
 func (c *Client) register() error {
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
 	if _, err := c.conn.Write([]byte("REGISTER UUID=" + c.uuid + ", TYPE=JSON")); err != nil {
 		return fmt.Errorf("could not write UUID %s to the connection: %w", c.uuid, err)
 	}
 
-	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
 		return fmt.Errorf("could not set read deadline to the future write call on the connection: %w", err)
 	}
 
 	return c.checkResponse()
 }
 
+// See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
 func (c *Client) requestData(database, table, version, gtid string) (<-chan Event, error) {
-	data := make(chan Event, 1)
+	events := make(chan Event, 1)
 
-	var requestDataCmd bytes.Buffer
-	if _, err := requestDataCmd.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
+	var command bytes.Buffer
+	if _, err := command.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
 		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the buffer: %w", err)
 	}
 	if version != "" {
-		if _, err := requestDataCmd.WriteString("." + version); err != nil {
+		if _, err := command.WriteString("." + version); err != nil {
 			return nil, fmt.Errorf("could not add the version to the REQUEST-DATA command in the buffer: %w", err)
 		}
 	}
 	if gtid != "" {
-		if _, err := requestDataCmd.WriteString(" " + gtid); err != nil {
+		if _, err := command.WriteString(" " + gtid); err != nil {
 			return nil, fmt.Errorf("could not add the GTID to the REQUEST-DATA command in the buffer: %w", err)
 		}
 	}
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
 		return nil, fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
-	if _, err := c.conn.Write(requestDataCmd.Bytes()); err != nil {
+	if _, err := c.conn.Write(command.Bytes()); err != nil {
 		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the connection: %w", err)
 	}
 
@@ -244,13 +264,13 @@ func (c *Client) requestData(database, table, version, gtid string) (<-chan Even
 	go func() {
 		defer c.wg.Done()
 
-		if err := c.handleEvents(data); err != nil {
-			c.logger.Printf("An error happened while decoding CDC events: %v\n", err)
+		if err := c.handleEvents(events); err != nil {
+			c.options.logger.Printf("An error happened while decoding CDC events: %v\n", err)
 		}
-		close(data)
+		close(events)
 	}()
 
-	return data, nil
+	return events, nil
 }
 
 func (c *Client) handleEvents(data chan<- Event) error {
@@ -261,7 +281,7 @@ func (c *Client) handleEvents(data chan<- Event) error {
 
 		// If the request for data is rejected, an error will be sent instead of the table schema.
 		if !readSchema && bytes.HasPrefix(token, errPrefix) {
-			c.logger.Printf("Failed to read the table schema: %s", token)
+			c.options.logger.Printf("Failed to read the table schema: %s", token)
 			continue
 		}
 
@@ -315,19 +335,6 @@ func (c *Client) decodeDDLEvent(data []byte) (*DDLEvent, error) {
 	return &event, nil
 }
 
-func (c *Client) Stop() error {
-	if c.conn == nil {
-		return ErrNotConnected
-	}
-
-	err := c.conn.Close()
-
-	c.wg.Wait()
-
-	c.conn = nil
-	return err
-}
-
 func (c *Client) formatAuthenticationMessage(user, password string) ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -352,7 +359,6 @@ func (c *Client) formatAuthenticationMessage(user, password string) ([]byte, err
 
 	return authMsg, nil
 }
-
 func (c *Client) checkResponse() error {
 	resp, err := readResponse(c.conn)
 	if err != nil {

@@ -17,22 +17,24 @@ type test struct {
 }
 
 func TestCDCClient_RequestData_FailsIfWrongAddress(t *testing.T) {
-	client := cdc.NewClient("wrong address", "", "", "")
+	address := "wrong address"
+	client := cdc.NewClient(address, "", "", "")
 
 	_, err := client.RequestData("", "")
-	if err == nil {
-		t.Fatalf("Should return an error when given a wrong address: %v", err)
+	if err == nil { // if NO error
+		t.Errorf("No error was returned after trying to connect at \"%s\": %v", address, err)
 	}
 }
 
 func TestCDCClient_RequestData_FailsWithWrongCredentials(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
-	client := cdc.NewClient(addr, "wrong", "credentials", "")
+	user, password := "wrong", "credentials"
+	client := cdc.NewClient(addr, user, password, "")
 
 	_, err := client.RequestData("", "")
-	if err == nil {
-		t.Fatalf("Should return an error when given wrong credentials: %v", err)
+	if err == nil { // if NO error
+		t.Errorf("No error was returned after trying to authenticate with user \"%s\" and password \"%s\": %v", user, password, err)
 	}
 }
 
@@ -43,8 +45,8 @@ func TestCDCClient_RequestData_FailsIfEmptyUUID(t *testing.T) {
 	client := cdc.NewClient(addr, user, password, "")
 
 	_, err := client.RequestData("", "")
-	if err == nil {
-		t.Fatalf("Should return an error when given empty UUID: %v", err)
+	if err == nil { // if NO error
+		t.Errorf("No error was returned after trying to register without any UUID: %v", err)
 	}
 }
 
@@ -52,11 +54,13 @@ func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) 
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := cdc.NewClient(addr, user, password, "test-uuid")
+	uuid := "test-uuid"
+	client := cdc.NewClient(addr, user, password, uuid)
 
-	_, err := client.RequestData("test", "bar")
+	database, table := "test", "bar"
+	_, err := client.RequestData(database, table)
 	if err != nil {
-		t.Fatalf("Should not return an error when given wrong database and table: %v", err)
+		t.Errorf("An error was returned when requested data from table %s.%s but it should continue listening: %v", database, table, err)
 	}
 	defer client.Stop()
 }
@@ -65,7 +69,8 @@ func TestCDCClient_RequestData(t *testing.T) {
 	host, port := os.Getenv("MAXSCALE_HOST"), os.Getenv("MAXSCALE_PORT")
 	addr := net.JoinHostPort(host, port)
 	user, password := os.Getenv("MAXSCALE_USER"), os.Getenv("MAXSCALE_PASSWORD")
-	client := cdc.NewClient(addr, user, password, "test-uuid")
+	uuid := "test-uuid"
+	client := cdc.NewClient(addr, user, password, uuid)
 
 	database, table := os.Getenv("MAXSCALE_DATABASE"), os.Getenv("MAXSCALE_TABLE")
 	data, err := client.RequestData(database, table)
@@ -129,15 +134,15 @@ func TestCDCClient_RequestData(t *testing.T) {
 		},
 	}
 	ddlEvent := event.(*cdc.DDLEvent)
-	if !cmp.Equal(expectedDDLEvent, ddlEvent) {
-		t.Fatalf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
+	if diff := cmp.Diff(ddlEvent, expectedDDLEvent); diff != "" {
+		t.Errorf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
 	}
 
 	event = <-data
 	dmlEvent := event.(*cdc.DMLEvent)
 	var insertedRow test
 	if err = json.Unmarshal(dmlEvent.Raw, &insertedRow); err != nil {
-		t.Fatalf("Should be able to unmarshal the raw data from the captured event to JSON: %v", err)
+		t.Errorf("Should be able to unmarshal the raw data from the captured event to JSON: %v", err)
 	}
 
 	// Cannot compare these fields since we cannot predict the exact timestamp
@@ -151,15 +156,14 @@ func TestCDCClient_RequestData(t *testing.T) {
 		EventNumber: 1,
 		EventType:   "insert",
 	}
-	if !cmp.Equal(expectedDMLEvent, dmlEvent) {
-		t.Fatalf("Captured DML event differs from the expected one:\n%s", cmp.Diff(expectedDMLEvent, dmlEvent))
+	if diff := cmp.Diff(dmlEvent, expectedDMLEvent); diff != "" {
+		t.Errorf("Captured DML event differs from the expected one:\n%s", diff)
 	}
 
 	expectedID := 1
 	if insertedRow.ID != expectedID {
-		t.Fatalf("The inserted row's id column should be equal to %d", expectedID)
+		t.Errorf("The inserted row's id column should be equal to %d", expectedID)
 	}
-
 }
 
 func TestCDCClient_RequestData_WithGTID(t *testing.T) {
@@ -230,15 +234,15 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 		},
 	}
 	ddlEvent := event.(*cdc.DDLEvent)
-	if !cmp.Equal(expectedDDLEvent, ddlEvent) {
-		t.Fatalf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))
+	if diff := cmp.Diff(ddlEvent, expectedDDLEvent); diff != "" {
+		t.Errorf("Captured DDL event differs from the expected one: %s", diff)
 	}
 
 	event = <-data
 	dmlEvent := event.(*cdc.DMLEvent)
 	var insertedRow test
 	if err = json.Unmarshal(dmlEvent.Raw, &insertedRow); err != nil {
-		t.Fatalf("Should be able to unmarshal the raw data from the captured event to JSON: %v", err)
+		t.Errorf("Should be able to unmarshal the raw data from the captured event to JSON: %v", err)
 	}
 
 	// Cannot compare these fields since we cannot predict the exact timestamp
@@ -252,12 +256,12 @@ func TestCDCClient_RequestData_WithGTID(t *testing.T) {
 		EventNumber: 1,
 		EventType:   "insert",
 	}
-	if !cmp.Equal(expectedDMLEvent, dmlEvent) {
-		t.Fatalf("Captured DML event differs from the expected one:\n%s", cmp.Diff(expectedDMLEvent, dmlEvent))
+	if diff := cmp.Diff(dmlEvent, expectedDMLEvent); diff != "" {
+		t.Errorf("Captured DML event differs from the expected one:\n%s", diff)
 	}
 
 	expectedID := 2
 	if insertedRow.ID != expectedID {
-		t.Fatalf("The inserted row's id column should be equal to %d", expectedID)
+		t.Errorf("The inserted row's id column should be equal to %d", expectedID)
 	}
 }

@@ -22,7 +22,7 @@ func TestCDCClient_RequestData_FailsIfWrongAddress(t *testing.T) {
 
 	_, err := client.RequestData("", "")
 	if err == nil { // if NO error
-		t.Errorf("No error was returned after trying to connect at \"%s\": %v", address, err)
+		t.Errorf("No error was returned after trying to connect at %q: %v", address, err)
 	}
 }
 
@@ -34,7 +34,7 @@ func TestCDCClient_RequestData_FailsWithWrongCredentials(t *testing.T) {
 
 	_, err := client.RequestData("", "")
 	if err == nil { // if NO error
-		t.Errorf("No error was returned after trying to authenticate with user \"%s\" and password \"%s\": %v", user, password, err)
+		t.Errorf("No error was returned after trying to authenticate with user %q and password %q: %v", user, password, err)
 	}
 }
 

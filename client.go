@@ -357,6 +357,7 @@ func (c *Client) formatAuthenticationMessage(user, password string) ([]byte, err
 
 	return authMsg, nil
 }
+
 func (c *Client) checkResponse() error {
 	resp, err := readResponse(c.conn)
 	if err != nil {

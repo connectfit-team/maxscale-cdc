@@ -5,15 +5,18 @@ import (
 	"fmt"
 )
 
+// EventType represents the type of the CDC event.
+type EventType int
+
 const (
-	TypeDDLEvent = iota
+	TypeDDLEvent EventType = iota
 	TypeDMLEvent
 )
 
 // Event represents data changes within MariaDB(DDL or DML).
 type Event interface {
 	// Type returns the type of data change captured.
-	Type() int
+	Type() EventType
 	// GTID returns the GTID associated to the event.
 	GTID() string
 }
@@ -22,26 +25,34 @@ type Event interface {
 //
 // See: https://github.com/mariadb-corporation/MaxScale/blob/6.4/Documentation/Routers/KafkaCDC.md
 type DDLEvent struct {
-	Namespace string          `json:"namespace"`
-	EventType string          `json:"type"`
-	Name      string          `json:"name"`
-	Table     string          `json:"table"`
-	Database  string          `json:"database"`
-	Version   int             `json:"version"`
+	Namespace string `json:"namespace"`
+	EventType string `json:"type"`
+	Name      string `json:"name"`
+	// Table is the name of the table associated to the event.
+	Table string `json:"table"`
+	// Database is the database the table is in.
+	Database string `json:"database"`
+	// Version is the schema version, incremented when the table format changes.
+	Version int `json:"version"`
+	// EventGTID is the GTID that created the current version of the table.
 	EventGTID string          `json:"gtid"`
 	Fields    []DDLEventField `json:"fields"`
 }
 
-func (*DDLEvent) Type() int { return TypeDDLEvent }
+func (*DDLEvent) Type() EventType { return TypeDDLEvent }
 
 func (e *DDLEvent) GTID() string { return e.EventGTID }
 
 type DDLEventField struct {
-	Name     string            `json:"name"`
-	Type     DDLEventFieldType `json:"type"`
-	RealType string            `json:"real_type,omitempty"`
-	Length   int               `json:"length,omitempty"`
-	Unsigned bool              `json:"unsigned,omitempty"`
+	// Name is the field name.
+	Name string            `json:"name"`
+	Type DDLEventFieldType `json:"type"`
+	// RealType represents the field type.
+	RealType string `json:"real_type,omitempty"`
+	// Length is the field length, if found.
+	Length int `json:"length,omitempty"`
+	// Unsigned tells wether the field is unsigned or not.
+	Unsigned bool `json:"unsigned,omitempty"`
 }
 
 func (f *DDLEventField) UnmarshalJSON(data []byte) error {
@@ -125,19 +136,21 @@ func (f *DDLEventField) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type DDLEventFieldTypeType int
+
 const (
-	TypeDDLEventFieldTypeTableData = iota
-	TypeDDLEventFieldTypeEvent
-	TypeDDLEventFieldFieldString
+	TypeDDLEventFieldTypeArray DDLEventFieldTypeType = iota
+	TypeDDLEventFieldTypeEnum
+	TypeDDLEventFieldTypeString
 )
 
 type DDLEventFieldType interface {
-	Type() int
+	Type() DDLEventFieldTypeType
 }
 
 type DDLEventFieldTypeTableData []string
 
-func (DDLEventFieldTypeTableData) Type() int { return TypeDDLEventFieldTypeTableData }
+func (DDLEventFieldTypeTableData) Type() DDLEventFieldTypeType { return TypeDDLEventFieldTypeArray }
 
 type DDLEventFieldTypeEnum struct {
 	FieldType string   `json:"type"`
@@ -145,28 +158,60 @@ type DDLEventFieldTypeEnum struct {
 	Symbols   []string `json:"symbols"`
 }
 
-func (DDLEventFieldTypeEnum) Type() int { return TypeDDLEventFieldTypeEvent }
+func (DDLEventFieldTypeEnum) Type() DDLEventFieldTypeType { return TypeDDLEventFieldTypeEnum }
 
 type DDLEventFieldTypeString string
 
-func (DDLEventFieldTypeString) Type() int { return TypeDDLEventFieldFieldString }
+func (DDLEventFieldTypeString) Type() DDLEventFieldTypeType { return TypeDDLEventFieldTypeString }
+
+// DMLEventType represents the type of the DML event.
+type DMLEventType string
+
+const (
+	// DMLEventTypeInsert is the type of the DML event which represents data that
+	// was added to MariaDB.
+	DMLEventTypeInsert DMLEventType = "insert"
+	// DMLEventTypeDelete is the type of the DML event which represents data that
+	// was removed from MariaDB.
+	DMLEventTypeDelete DMLEventType = "delete"
+	// DMLEventTypeUpdateBefore is the type of the DML event which contains
+	// the data before an update statement modified it.
+	DMLEventTypeUpdateBefore DMLEventType = "update_before"
+	// DMLEventTypeUpdateAfter is the type of the DML event which contains
+	// the data after an update statement modified it.
+	DMLEventTypeUpdateAfter DMLEventType = "update_after"
+)
 
 // DMLEvent represents data manipulation events(INSERT, UPDATE, DELETE).
 //
 // See: https://github.com/mariadb-corporation/MaxScale/blob/maxscale-6.2.4/Documentation/Routers/KafkaCDC.md#overview
 type DMLEvent struct {
-	Domain      int    `json:"domain"`
-	ServerID    int    `json:"server_id"`
-	Sequence    int    `json:"sequence"`
-	EventNumber int    `json:"event_number"`
-	Timestamp   int64  `json:"timestamp"`
-	EventType   string `json:"event_type"`
-	TableName   string `json:"table_name"`
+	// Domain is the first part of the GTID.
+	// See https://mariadb.com/kb/en/gtid/#the-domain-id
+	Domain int `json:"domain"`
+	// ServerID is the second part of the GTID.
+	// It is a unique number for each MariaDB/MySQL server.
+	ServerID int `json:"server_id"`
+	// Sequence is the third part of the GTID.
+	// It is a monotonically increasing integer for each event group.
+	Sequence int `json:"sequence"`
+	// EventNumber is the sequence number of events inside the transaction
+	// starting from 1.
+	EventNumber int `json:"event_number"`
+	// Timestamp is the UNIX timestamp when the event occurred.
+	Timestamp int64 `json:"timestamp"`
+	// EventType is the type of the event.
+	// It can either be `insert`, `delete`, `updated_before` or `update_after`.
+	EventType DMLEventType `json:"event_type"`
+	// TableName is the name of the table associated to the event.
+	TableName string `json:"table_name"`
+	// TableSchema is the name of the database the table is in.
 	TableSchema string `json:"table_schema"`
-	Raw         []byte `json:"raw"`
+	// Raw is a JSON representation of the event the way it was received.
+	Raw []byte `json:"raw"`
 }
 
-func (*DMLEvent) Type() int { return TypeDMLEvent }
+func (*DMLEvent) Type() EventType { return TypeDMLEvent }
 
 func (e *DMLEvent) GTID() string {
 	return fmt.Sprintf("%d-%d-%d", e.Domain, e.ServerID, e.Sequence)
@@ -177,6 +222,8 @@ func (e *DMLEvent) TableData() (map[string]interface{}, error) {
 	if err := json.Unmarshal(e.Raw, &tableData); err != nil {
 		return nil, fmt.Errorf("could not unmarshal the raw DML event: %w", err)
 	}
+
+	// Table data are all the fields that are not part of those below.
 	delete(tableData, "domain")
 	delete(tableData, "server_id")
 	delete(tableData, "sequence")

@@ -145,7 +145,7 @@ type requestDataOptions struct {
 //
 // Call Stop to close the connection and release the associated ressources when done.
 //
-// Also See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
+// Also see https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#request-data
 func (c *Client) RequestData(database, table string, opts ...RequestDataOption) (<-chan Event, error) {
 	if err := c.connect(); err != nil {
 		return nil, fmt.Errorf("failed to establish connection: %w", err)
@@ -320,9 +320,8 @@ func (c *Client) decodeDMLEvent(data []byte) (*DMLEvent, error) {
 	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the DML event data into a go value: %w", err)
 	}
-
-	event.Raw = data
-
+	event.Raw = make([]byte, len(data))
+	copy(event.Raw, data)
 	return &event, nil
 }
 
@@ -331,7 +330,6 @@ func (c *Client) decodeDDLEvent(data []byte) (*DDLEvent, error) {
 	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal the DDL event data into a go value: %w", err)
 	}
-
 	return &event, nil
 }
 
@@ -359,6 +357,7 @@ func (c *Client) formatAuthenticationMessage(user, password string) ([]byte, err
 
 	return authMsg, nil
 }
+
 func (c *Client) checkResponse() error {
 	resp, err := readResponse(c.conn)
 	if err != nil {

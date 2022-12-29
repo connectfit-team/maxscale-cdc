@@ -24,7 +24,7 @@ services:
         environment:
             MYSQL_ALLOW_EMPTY_PASSWORD: 'Y'
         volumes:
-            - ./scripts/sql/init-test-database.sql:/docker-entrypoint-initdb.d/test.sql
+            - ./docker/sql/init_test_db.sql:/docker-entrypoint-initdb.d/init_test_db.sql
         command: mysqld --log-bin=mariadb-bin --binlog-format=ROW --server-id=3000 --log-slave-updates
         ports:
             - "3600:3306"
@@ -39,9 +39,9 @@ services:
             mariadb:
                 condition: service_healthy
         volumes:
-            - ./maxscale/example.cnf:/etc/maxscale.cnf.d/example.cnf
+            - ./docker/config/maxscale/example.cnf:/etc/maxscale.cnf.d/example.cnf
         ports:
-            - "4001:4001"   # CDC
+            - "4001:4001"
         healthcheck:
             test: curl -I http://localhost:8989/
             interval: 5s

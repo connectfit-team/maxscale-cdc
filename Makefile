@@ -2,8 +2,8 @@ COVERAGE_OUTPUT	=	coverage.out
 
 DOCKER_COMPOSE_FILE_TEST = docker-compose.yml
 
-.PHONY: integration-test
-integration-test: vendor
+.PHONY: integration-tests
+integration-tests: vendor
 	@echo "> Starting services needed for integration tests..."
 	@docker-compose -f $(DOCKER_COMPOSE_FILE_TEST) up \
 	--build \

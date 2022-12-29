@@ -28,8 +28,6 @@ var (
 )
 
 const (
-	defaultReadSize = 4096
-
 	defaultDialTimeout  = time.Second * 5
 	defaultReadTimeout  = time.Second * 5
 	defaultWriteTimeout = time.Second * 5
@@ -93,7 +91,7 @@ type Client struct {
 // NewClient returns a new MaxScale CDC Client given an address to connect to,
 // credentials to authenticate and an UUID to register the client.
 func NewClient(address, user, password, uuid string, opts ...ClientOption) *Client {
-	c := &Client{
+	client := &Client{
 		address:  address,
 		user:     user,
 		password: password,
@@ -107,10 +105,10 @@ func NewClient(address, user, password, uuid string, opts ...ClientOption) *Clie
 	}
 
 	for _, opt := range opts {
-		opt(&c.options)
+		opt(&client.options)
 	}
 
-	return c
+	return client
 }
 
 // RequestDataOption is a functional option to parameterize a RequestData call.
@@ -305,11 +303,11 @@ func (c *Client) decodeEvent(data []byte) (Event, error) {
 	)
 	if bytes.HasPrefix(data, []byte(`{"domain":`)) {
 		if event, err = c.decodeDMLEvent(data); err != nil {
-			return nil, fmt.Errorf("failed to decode DML event: %v\n", err)
+			return nil, fmt.Errorf("failed to decode DML event: %w", err)
 		}
 	} else {
 		if event, err = c.decodeDDLEvent(data); err != nil {
-			return nil, fmt.Errorf("failed to decode DDL event: %v\n", err)
+			return nil, fmt.Errorf("failed to decode DDL event: %w", err)
 		}
 	}
 	return event, nil

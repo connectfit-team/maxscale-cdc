@@ -1,0 +1,47 @@
+# Options for analysis running.
+run:
+  # List of build tags, all linters use it.
+  # Default: [].
+  build-tags:
+    - integration
+# output configuration options
+output:
+  # See the dedicated "output" documentation section.
+  option: value
+# All available settings of specific linters.
+linters:
+  enable:
+    - revive
+    - bodyclose
+    - containedctx
+    - errname
+    - goconst
+    - gocritic
+    - gofmt
+    - goimports
+    - makezero
+    - misspell
+    - whitespace
+    - usestdlibvars
+    - unparam
+    - unconvert
+    - testpackage
+    - stylecheck
+    - reassign
+    - predeclared
+    - prealloc
+    - noctx
+    - nilnil
+    - nilerr
+    - nestif
+    - nakedret
+  disable:
+    - errcheck
+linters-settings:
+  option: value
+issues:
+  # See the dedicated "issues" documentation section.
+  option: value
+severity:
+  # See the dedicated "severity" documentation section.
+  option: value

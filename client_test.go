@@ -60,7 +60,7 @@ func TestCDCClient_RequestData_DoesNotFailEvenIfTableDoesNotExist(t *testing.T) 
 	database, table := "test", "bar"
 	_, err := client.RequestData(database, table)
 	if err != nil {
-		t.Errorf("An error was returned when requested data from table %s.%s but it should continue listening: %v", database, table, err)
+		t.Errorf("Should continue listening for event on table %s.%s but got: %v", database, table, err)
 	}
 	defer client.Stop()
 }
@@ -79,7 +79,6 @@ func TestCDCClient_RequestData(t *testing.T) {
 	}
 	defer client.Stop()
 
-	event := <-data
 	expectedDDLEvent := &cdc.DDLEvent{
 		Namespace: "MaxScaleChangeDataSchema.avro",
 		EventType: "record",
@@ -133,6 +132,7 @@ func TestCDCClient_RequestData(t *testing.T) {
 			},
 		},
 	}
+	event := <-data
 	ddlEvent := event.(*cdc.DDLEvent)
 	if diff := cmp.Diff(ddlEvent, expectedDDLEvent); diff != "" {
 		t.Errorf("Captured DDL event differs from the expected one: %s", cmp.Diff(expectedDDLEvent, ddlEvent))

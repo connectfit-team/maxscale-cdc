@@ -28,8 +28,6 @@ var (
 )
 
 const (
-	defaultReadSize = 4096
-
 	defaultDialTimeout  = time.Second * 5
 	defaultReadTimeout  = time.Second * 5
 	defaultWriteTimeout = time.Second * 5
@@ -93,7 +91,7 @@ type Client struct {
 // NewClient returns a new MaxScale CDC Client given an address to connect to,
 // credentials to authenticate and an UUID to register the client.
 func NewClient(address, user, password, uuid string, opts ...ClientOption) *Client {
-	c := &Client{
+	client := &Client{
 		address:  address,
 		user:     user,
 		password: password,
@@ -107,10 +105,10 @@ func NewClient(address, user, password, uuid string, opts ...ClientOption) *Clie
 	}
 
 	for _, opt := range opts {
-		opt(&c.options)
+		opt(&client.options)
 	}
 
-	return c
+	return client
 }
 
 // RequestDataOption is a functional option to parameterize a RequestData call.
@@ -196,37 +194,23 @@ func (c *Client) connect() error {
 
 // See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
 func (c *Client) authenticate() error {
-	authMsg, err := c.formatAuthenticationMessage(c.user, c.password)
+	authMsg, err := c.formatAuthenticationCommand(c.user, c.password)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not format the authentication command: %w", err)
 	}
 
-	if err = c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
-		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
-	}
-	if _, err = c.conn.Write(authMsg); err != nil {
+	if err = c.writeToConnection(authMsg); err != nil {
 		return fmt.Errorf("could not write the authentication message to the connection: %w", err)
 	}
 
-	if err = c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
-		return fmt.Errorf("could not set read deadline to the future read call on the connection: %w", err)
-	}
 	return c.checkResponse()
 }
 
 // See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#registration_1
 func (c *Client) register() error {
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
-		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
-	}
-	if _, err := c.conn.Write([]byte("REGISTER UUID=" + c.uuid + ", TYPE=JSON")); err != nil {
+	if err := c.writeToConnection([]byte("REGISTER UUID=" + c.uuid + ", TYPE=JSON")); err != nil {
 		return fmt.Errorf("could not write UUID %s to the connection: %w", c.uuid, err)
 	}
-
-	if err := c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
-		return fmt.Errorf("could not set read deadline to the future write call on the connection: %w", err)
-	}
-
 	return c.checkResponse()
 }
 
@@ -234,25 +218,12 @@ func (c *Client) register() error {
 func (c *Client) requestData(database, table, version, gtid string) (<-chan Event, error) {
 	events := make(chan Event, 1)
 
-	var command bytes.Buffer
-	if _, err := command.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
-		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the buffer: %w", err)
-	}
-	if version != "" {
-		if _, err := command.WriteString("." + version); err != nil {
-			return nil, fmt.Errorf("could not add the version to the REQUEST-DATA command in the buffer: %w", err)
-		}
-	}
-	if gtid != "" {
-		if _, err := command.WriteString(" " + gtid); err != nil {
-			return nil, fmt.Errorf("could not add the GTID to the REQUEST-DATA command in the buffer: %w", err)
-		}
+	cmd, err := c.formatRequestDataCommand(database, table, version, gtid)
+	if err != nil {
+		return nil, fmt.Errorf("could not format the REQUEST-DATA command: %w", err)
 	}
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
-		return nil, fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
-	}
-	if _, err := c.conn.Write(command.Bytes()); err != nil {
+	if err := c.writeToConnection(cmd); err != nil {
 		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the connection: %w", err)
 	}
 
@@ -305,11 +276,11 @@ func (c *Client) decodeEvent(data []byte) (Event, error) {
 	)
 	if bytes.HasPrefix(data, []byte(`{"domain":`)) {
 		if event, err = c.decodeDMLEvent(data); err != nil {
-			return nil, fmt.Errorf("failed to decode DML event: %v\n", err)
+			return nil, fmt.Errorf("failed to decode DML event: %w", err)
 		}
 	} else {
 		if event, err = c.decodeDDLEvent(data); err != nil {
-			return nil, fmt.Errorf("failed to decode DDL event: %v\n", err)
+			return nil, fmt.Errorf("failed to decode DDL event: %w", err)
 		}
 	}
 	return event, nil
@@ -333,12 +304,12 @@ func (c *Client) decodeDDLEvent(data []byte) (*DDLEvent, error) {
 	return &event, nil
 }
 
-func (c *Client) formatAuthenticationMessage(user, password string) ([]byte, error) {
+func (c *Client) formatAuthenticationCommand(user, password string) ([]byte, error) {
 	var buf bytes.Buffer
 
 	_, err := buf.WriteString(user + ":")
 	if err != nil {
-		return nil, fmt.Errorf("could not write username in the authentication message: %w", err)
+		return nil, fmt.Errorf("could not write username %q in the authentication message: %w", user, err)
 	}
 
 	h := sha1.New()
@@ -358,8 +329,52 @@ func (c *Client) formatAuthenticationMessage(user, password string) ([]byte, err
 	return authMsg, nil
 }
 
+func (c *Client) formatRequestDataCommand(database, table, version, gtid string) ([]byte, error) {
+	var command bytes.Buffer
+
+	if _, err := command.WriteString("REQUEST-DATA " + database + "." + table); err != nil {
+		return nil, fmt.Errorf("could not write the REQUEST-DATA command to the buffer: %w", err)
+	}
+
+	if version != "" {
+		if _, err := command.WriteString("." + version); err != nil {
+			return nil, fmt.Errorf("could not add the version %q to the REQUEST-DATA command in the buffer: %w", version, err)
+		}
+	}
+
+	if gtid != "" {
+		if _, err := command.WriteString(" " + gtid); err != nil {
+			return nil, fmt.Errorf("could not add the GTID %q to the REQUEST-DATA command in the buffer: %w", gtid, err)
+		}
+	}
+
+	return command.Bytes(), nil
+}
+
+func (c *Client) writeToConnection(b []byte) error {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
+		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
+	}
+
+	if _, err := c.conn.Write(b); err != nil {
+		return fmt.Errorf("could not write the authentication message to the connection: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) readResponse() ([]byte, error) {
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
+		return nil, fmt.Errorf("could not set read deadline to the future read call on the connection: %w", err)
+	}
+
+	s := bufio.NewScanner(c.conn)
+	s.Scan()
+	return s.Bytes(), s.Err()
+}
+
 func (c *Client) checkResponse() error {
-	resp, err := readResponse(c.conn)
+	resp, err := c.readResponse()
 	if err != nil {
 		return err
 	}
@@ -369,12 +384,6 @@ func (c *Client) checkResponse() error {
 	}
 
 	return nil
-}
-
-func readResponse(r io.Reader) ([]byte, error) {
-	s := bufio.NewScanner(r)
-	s.Scan()
-	return s.Bytes(), s.Err()
 }
 
 func isErrorResponse(resp []byte) bool {

@@ -236,7 +236,7 @@ func (c *Client) requestData(database, table, version, gtid string) (<-chan Even
 		defer c.wg.Done()
 
 		if err := c.handleEvents(events); err != nil {
-			c.options.logger.Printf("An error happened while decoding CDC events: %v\n", err)
+			c.options.logger.Printf("An error happened while decoding %s.%s CDC events: %v\n", database, table, err)
 		}
 		close(events)
 	}()
@@ -276,11 +276,11 @@ func (c *Client) decodeEvent(data []byte) (Event, error) {
 	)
 	if bytes.HasPrefix(data, []byte(`{"domain":`)) {
 		if event, err = c.decodeDMLEvent(data); err != nil {
-			return nil, fmt.Errorf("failed to decode DML event: %w", err)
+			return nil, fmt.Errorf("failed to decode DML event(%s): %w", data, err)
 		}
 	} else {
 		if event, err = c.decodeDDLEvent(data); err != nil {
-			return nil, fmt.Errorf("failed to decode DDL event: %w", err)
+			return nil, fmt.Errorf("failed to decode DDL event(%s): %w", data, err)
 		}
 	}
 	return event, nil

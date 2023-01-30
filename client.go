@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
+
+	"golang.org/x/exp/slog"
 )
 
 var (
@@ -24,7 +24,7 @@ var (
 var errPrefix = []byte("ERR")
 
 var (
-	defaultLogger = log.New(io.Discard, "", 0)
+	defaultLogger = slog.Default()
 )
 
 const (
@@ -33,16 +33,11 @@ const (
 	defaultWriteTimeout = time.Second * 5
 )
 
-// Logger represents any logging object which support formatting.
-type Logger interface {
-	Printf(format string, args ...interface{})
-}
-
 type clientOptions struct {
 	dialTimeout  time.Duration
 	readTimeout  time.Duration
 	writeTimeout time.Duration
-	logger       Logger
+	logger       *slog.Logger
 }
 
 // ClientOption is a function option used to parameterize a CDC client.
@@ -71,7 +66,7 @@ func WithWriteTimeout(timeout time.Duration) ClientOption {
 }
 
 // WithLogger sets the logger used by the client.
-func WithLogger(logger Logger) ClientOption {
+func WithLogger(logger *slog.Logger) ClientOption {
 	return func(co *clientOptions) {
 		co.logger = logger
 	}
@@ -236,7 +231,10 @@ func (c *Client) requestData(database, table, version, gtid string) (<-chan Even
 		defer c.wg.Done()
 
 		if err := c.handleEvents(events); err != nil {
-			c.options.logger.Printf("An error happened while decoding %s.%s CDC events: %v\n", database, table, err)
+			c.options.logger.Error("An error happened while decoding CDC events", err,
+				"database", database,
+				"table", table,
+			)
 		}
 		close(events)
 	}()
@@ -251,8 +249,10 @@ func (c *Client) handleEvents(data chan<- Event) error {
 		token := scanner.Bytes()
 
 		// If the request for data is rejected, an error will be sent instead of the table schema.
-		if !readSchema && bytes.HasPrefix(token, errPrefix) {
-			c.options.logger.Printf("Failed to read the table schema: %s", token)
+		if !readSchema && isErrorResponse(token) {
+			c.options.logger.Warn("Failed to read the table schema",
+				"error", token,
+			)
 			continue
 		}
 
@@ -274,7 +274,7 @@ func (c *Client) decodeEvent(data []byte) (Event, error) {
 		event Event
 		err   error
 	)
-	if bytes.HasPrefix(data, []byte(`{"domain":`)) {
+	if isDMLEvent(data) {
 		if event, err = c.decodeDMLEvent(data); err != nil {
 			return nil, fmt.Errorf("failed to decode DML event(%s): %w", data, err)
 		}
@@ -388,4 +388,8 @@ func (c *Client) checkResponse() error {
 
 func isErrorResponse(resp []byte) bool {
 	return bytes.HasPrefix(resp, errPrefix)
+}
+
+func isDMLEvent(data []byte) bool {
+	return bytes.HasPrefix(data, []byte(`{"domain":`))
 }

@@ -251,7 +251,7 @@ func (c *Client) handleEvents(data chan<- Event) error {
 		// If the request for data is rejected, an error will be sent instead of the table schema.
 		if !readSchema && isErrorResponse(token) {
 			c.options.logger.Warn("Failed to read the table schema",
-				"error", token,
+				"error", string(token),
 			)
 			continue
 		}

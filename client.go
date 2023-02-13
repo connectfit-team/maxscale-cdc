@@ -15,6 +15,8 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+const MaxScanTokenSize = 1024 * 1024
+
 var (
 	// ErrNotConnected is returned when trying to stop the client from streaming
 	// CDC events while it is not running.
@@ -245,6 +247,11 @@ func (c *Client) requestData(database, table, version, gtid string) (<-chan Even
 func (c *Client) handleEvents(data chan<- Event) error {
 	var readSchema bool
 	scanner := bufio.NewScanner(c.conn)
+	// HOTFIX: Replace by a `bufio.Reader` instead since it seems to be the
+	// preferred method.
+	// See https://pkg.go.dev/bufio#Scanner
+	buf := make([]byte, 0, MaxScanTokenSize)
+	scanner.Buffer(buf, MaxScanTokenSize)
 	for scanner.Scan() {
 		token := scanner.Bytes()
 

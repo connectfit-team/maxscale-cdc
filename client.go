@@ -251,6 +251,9 @@ func (c *Client) handleEvents(data chan<- Event) error {
 	scanner.Buffer(buf, MaxScanTokenSize)
 	for scanner.Scan() {
 		token := scanner.Bytes()
+		if len(token) == 0 {
+			continue
+		}
 
 		// If the request for data is rejected, an error will be sent instead of the table schema.
 		if !readSchema && isErrorResponse(token) {

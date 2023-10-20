@@ -8,14 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
-
-	"golang.org/x/exp/slog"
 )
 
-const MaxScanTokenSize = 1024 * 1024
+const maxScanTokenSize = 1024 * 1024
 
 var (
 	// ErrNotConnected is returned when trying to stop the client from streaming
@@ -82,7 +81,7 @@ type Client struct {
 	uuid     string
 	conn     net.Conn
 	wg       sync.WaitGroup
-	options  clientOptions
+	clientOptions
 }
 
 // NewClient returns a new MaxScale CDC Client given an address to connect to,
@@ -93,7 +92,7 @@ func NewClient(address, user, password, uuid string, opts ...ClientOption) *Clie
 		user:     user,
 		password: password,
 		uuid:     uuid,
-		options: clientOptions{
+		clientOptions: clientOptions{
 			dialTimeout:  defaultDialTimeout,
 			readTimeout:  defaultReadTimeout,
 			writeTimeout: defaultWriteTimeout,
@@ -102,7 +101,7 @@ func NewClient(address, user, password, uuid string, opts ...ClientOption) *Clie
 	}
 
 	for _, opt := range opts {
-		opt(&client.options)
+		opt(&client.clientOptions)
 	}
 
 	return client
@@ -179,7 +178,7 @@ func (c *Client) Stop() error {
 // See https://mariadb.com/kb/en/mariadb-maxscale-6-change-data-capture-cdc-protocol/#connection-and-authentication
 func (c *Client) connect() error {
 	dialer := &net.Dialer{
-		Timeout: c.options.dialTimeout,
+		Timeout: c.dialTimeout,
 	}
 	conn, err := dialer.Dial("tcp", c.address)
 	if err != nil {
@@ -233,9 +232,10 @@ func (c *Client) requestData(database, table, version, gtid string) (<-chan Even
 		defer c.wg.Done()
 
 		if err := c.handleEvents(events); err != nil {
-			c.options.logger.Error("An error happened while decoding CDC events", err,
-				"database", database,
-				"table", table,
+			c.logger.Error("An error happened while decoding CDC events",
+				slog.Any("err", err),
+				slog.String("database", database),
+				slog.String("table", table),
 			)
 		}
 		close(events)
@@ -247,15 +247,15 @@ func (c *Client) requestData(database, table, version, gtid string) (<-chan Even
 func (c *Client) handleEvents(data chan<- Event) error {
 	var readSchema bool
 	scanner := bufio.NewScanner(c.conn)
-	buf := make([]byte, 0, MaxScanTokenSize)
-	scanner.Buffer(buf, MaxScanTokenSize)
+	buf := make([]byte, 0, maxScanTokenSize)
+	scanner.Buffer(buf, maxScanTokenSize)
 	for scanner.Scan() {
 		token := scanner.Bytes()
 
 		// If the request for data is rejected, an error will be sent instead of the table schema.
 		if !readSchema && isErrorResponse(token) {
-			c.options.logger.Warn("Failed to read the table schema",
-				"error", string(token),
+			c.logger.Warn("Failed to read the table schema",
+				slog.String("error", string(token)),
 			)
 			continue
 		}
@@ -356,7 +356,7 @@ func (c *Client) formatRequestDataCommand(database, table, version, gtid string)
 }
 
 func (c *Client) writeToConnection(b []byte) error {
-	if err := c.conn.SetWriteDeadline(time.Now().Add(c.options.writeTimeout)); err != nil {
+	if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
 		return fmt.Errorf("could not set write deadline to the future write call on the connection: %w", err)
 	}
 
@@ -368,7 +368,7 @@ func (c *Client) writeToConnection(b []byte) error {
 }
 
 func (c *Client) readResponse() ([]byte, error) {
-	if err := c.conn.SetReadDeadline(time.Now().Add(c.options.readTimeout)); err != nil {
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.readTimeout)); err != nil {
 		return nil, fmt.Errorf("could not set read deadline to the future read call on the connection: %w", err)
 	}
 
